@@ -1,0 +1,79 @@
+from pathlib import Path
+
+import numpy as np
+import rasterio
+from rasterio.transform import from_origin
+
+from iceberg_sar.seaice import apply_coarse_mask, coarse_stats, detect_ice
+
+WATER, ICE = 10 ** (-31 / 10), 10 ** (-20 / 10)
+KW = dict(cell_m=200, min_excess_db=6, max_cv=0.8, min_area_km2=2, strip_min_km2=0.5, buffer_m=0)
+
+
+def _scene() -> tuple[np.ndarray, np.ndarray]:
+    mean = np.full((100, 100), WATER)
+    cv = np.full((100, 100), 1.1)
+    return mean, cv
+
+
+def test_uniform_pack_ice_is_masked() -> None:
+    mean, cv = _scene()
+    mean[10:30, 10:30], cv[10:30, 10:30] = ICE, 0.5  # 16 km² floe field
+    ice, water_db = detect_ice(mean, cv, **KW)
+    assert water_db == np.float32(-31) or abs(water_db + 31) < 0.01
+    assert ice[10:30, 10:30].all()
+    assert ice.sum() == 400
+
+
+def test_isolated_iceberg_cells_are_kept() -> None:
+    mean, cv = _scene()
+    mean[50, 50], cv[50, 50] = ICE, 3.0            # one spiky bright cell
+    mean[70:72, 70:72], cv[70:72, 70:72] = ICE, 0.6  # 2x2 bright, uniform (big berg)
+    ice, _ = detect_ice(mean, cv, **KW)
+    assert not ice.any()
+
+
+def test_thin_spiky_ice_strip_is_masked() -> None:
+    mean, cv = _scene()
+    mean[60, 20:40], cv[60, 20:40] = ICE, 1.5  # 20 cells = 0.8 km² ribbon
+    ice, _ = detect_ice(mean, cv, **KW)
+    assert ice[60, 20:40].all()
+
+
+def test_buffer_grows_mask() -> None:
+    mean, cv = _scene()
+    mean[40:60, 40:60], cv[40:60, 40:60] = ICE, 0.5
+    ice, _ = detect_ice(mean, cv, **{**KW, "buffer_m": 1000})
+    assert ice[40:60, 35].all() and not ice[40:60, 30].any()
+
+
+def _write(path: Path, data: np.ndarray) -> Path:
+    with rasterio.open(
+        path, "w", driver="GTiff", height=data.shape[0], width=data.shape[1], count=1,
+        dtype="float32", crs="EPSG:32621", transform=from_origin(600000, 5500000, 20, 20),
+        nodata=float("nan"),
+    ) as dst:
+        dst.write(data.astype(np.float32), 1)
+    return path
+
+
+def test_coarse_stats_and_apply_mask_on_uneven_grid(tmp_path: Path) -> None:
+    rng = np.random.default_rng(1)
+    data = rng.exponential(WATER, (35, 47)).astype(np.float32)  # not a multiple of 10
+    data[:10, :10] = ICE
+    path = _write(tmp_path / "hv.tif", data)
+
+    st = coarse_stats(path, factor=10)
+    assert st.mean_lin.shape == (4, 5)
+    assert abs(st.mean_lin[0, 0] - ICE) < 1e-6 and st.cv[0, 0] < 1e-3
+    assert 0.5 < st.cv[1, 1] < 1.5  # exponential speckle: CV ~ 1
+    assert abs(st.transform.a) == 200
+
+    mask = np.zeros((4, 5), dtype=bool)
+    mask[0, 0] = mask[3, 4] = True  # includes the partial bottom-right cell
+    n = apply_coarse_mask(path, mask, factor=10, block_rows=10)
+    with rasterio.open(path) as src:
+        out = src.read(1)
+    assert np.isnan(out[:10, :10]).all() and np.isnan(out[30:, 40:]).all()
+    assert np.isfinite(out[10:30, :]).all()
+    assert n == 100 + 5 * 7

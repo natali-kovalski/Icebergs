@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iceberg-sar"
+version = "0.1.0"
+description = "Iceberg detection and iceberg-vs-ship classification off Newfoundland in Sentinel-1 SAR imagery."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "rasterio>=1.3.9",
+    "shapely>=2.0",
+    "geopandas>=0.14",
+    "pyproj>=3.6",
+    "scikit-image>=0.22",
+    "matplotlib>=3.8",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "typer>=0.12",
+    "asf_search>=7.0",
+    "hyp3_sdk>=6.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.2",
+    "scikit-learn>=1.4",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+    "types-PyYAML",
+]
+
+[project.scripts]
+iceberg-sar = "iceberg_sar.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore:Use `@` matmul:PendingDeprecationWarning"]  # rasterio internals
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

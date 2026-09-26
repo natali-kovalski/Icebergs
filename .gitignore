@@ -1,0 +1,36 @@
+# Data, outputs, and model weights: never commit
+data/
+*.tif
+*.tiff
+*.zip
+*.SAFE/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Viewer
+viewer/node_modules/
+viewer/dist/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

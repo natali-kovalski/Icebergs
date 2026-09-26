@@ -1,0 +1,78 @@
+# Iceberg Alley SAR: pipeline configuration.
+# Paths are relative to the repo root.
+
+paths:
+  aoi: aoi.geojson
+  data_dir: data
+  raw: data/raw            # HyP3 downloads
+  interim: data/interim    # masked / calibrated rasters
+  kaggle: data/kaggle      # Statoil/C-CORE dataset
+  outputs: data/outputs    # detections, chips, CZML
+  land_mask: data/land/osm_land_aoi.gpkg  # OSM land polygons clipped to AOI (built by `land-mask`)
+
+search:
+  # Spring 2025: S1A + S1C give dense IW HH+HV coverage (matches Kaggle HH/HV).
+  start_date: "2025-04-01"
+  end_date: "2025-06-30"
+  platform: SENTINEL-1
+  processing_levels: [GRD_HD, GRD_MD]   # IW comes as GRD_HD; EW comes as GRD_MD (medium res)
+  beam_modes: [IW, EW]      # IW is usually VV/VH, EW is usually HH/HV. Check each scene.
+  max_results: 500
+
+hyp3:
+  job_type: RTC_GAMMA
+  resolution: 20            # metres. 10 is sharper but uses more credits and disk. 20 fits small bergs vs. clutter.
+  scale: power              # linear power; convert to dB where needed
+  radiometry: gamma0
+  dem_matching: false
+  include_inc_map: true     # incidence angle is a classifier feature
+  include_scattering_area: false
+
+preprocess:
+  # OSM land polygons (ODbL). ~900 MB one-time download; only the AOI clip is kept in use.
+  land_polygons_url: https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip
+  land_polygons_member: land-polygons-split-4326/land_polygons.shp
+  land_buffer_m: 500        # removes coastal clutter from shoreline and small islands
+  mask_outside_aoi: true    # only keep ocean pixels inside aoi.geojson
+  metric_crs: EPSG:32621    # UTM 21N for metric processing if the scene is not already projected
+  quicklook_db_range: null  # [min, max] dB, or null to use 2nd-99.9th percentile of sea pixels
+  quicklook_max_px: 4096    # longest side of the PNG
+  quicklook_pool: max       # max keeps 1-3 px icebergs visible when downsampling; "mean" looks smoother
+
+seaice:
+  # Pack-ice mask from cross-pol backscatter, computed on coarse cells.
+  # Tuned on S1A 2025-05-08: water ~ -31 dB / CV ~1.1, pack ice ~ -20 dB / CV ~0.5.
+  enabled: true
+  band: HV                  # falls back to VH for VV/VH scenes
+  cell_px: 10               # 10 x 20 m = 200 m cells; big enough for stable stats, small vs. ice floes
+  min_excess_db: 6          # brighter than the open-water reference (25th pct of cells) by this much
+  max_cv: 0.8               # pack ice is uniform at 200 m; iceberg cells are spiky (CV > 1)
+  min_area_km2: 2           # smallest pack-ice core kept
+  strip_min_km2: 0.5        # connected bright cells this large count as ice strips; icebergs light 1-4 cells
+  buffer_m: 1000            # catches loose floes at the ice edge
+
+cfar:
+  variant: CA               # cell-averaging. Simple, fast, standard baseline.
+  guard_px: 5               # guard half-width, keeps a target's own energy out of the background estimate
+  background_px: 20         # background half-width
+  pfa: 1.0e-6               # false-alarm probability, sets the threshold factor
+  band: HV                  # cross-pol usually gives better target/sea contrast; fallback VH
+
+detections:
+  min_area_px: 2
+  max_area_px: 2000
+  edge_buffer_px: 10
+
+chips:
+  size_px: 75               # matches the Kaggle training chips
+
+classifier:
+  folds: 5
+  epochs: 40
+  batch_size: 32
+  learning_rate: 1.0e-3
+  use_incidence_angle: true
+  seed: 42
+
+output:
+  crs: EPSG:4326
