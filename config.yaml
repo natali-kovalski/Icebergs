@@ -9,6 +9,7 @@ paths:
   kaggle: data/kaggle      # Statoil/C-CORE dataset
   outputs: data/outputs    # detections, chips, CZML
   land_mask: data/land/osm_land_aoi.gpkg  # OSM land polygons clipped to AOI (built by `land-mask`)
+  ground_truth: data/ground_truth   # NAIS iceberg chart GIFs (downloaded)
 
 search:
   # Spring 2025: S1A + S1C give dense IW HH+HV coverage (matches Kaggle HH/HV).
@@ -57,11 +58,18 @@ cfar:
   background_px: 20         # background half-width
   pfa: 1.0e-6               # false-alarm probability, sets the threshold factor
   band: HV                  # cross-pol usually gives better target/sea contrast; fallback VH
+  enl: auto                 # speckle looks for the threshold; "auto" = 1/median(CV)^2 over water
+  enl_cell_px: 25           # cell size for the ENL estimate (500 m at 20 m pixels)
+  min_background_fraction: 0.5  # skip pixels whose ring is mostly masked (coast, ice edge)
 
 detections:
   min_area_px: 2
   max_area_px: 2000
-  edge_buffer_px: 10
+  edge_buffer_px: 10        # drop targets within 200 m of land/ice/nodata masks
+  max_extent_px: 64         # 1.3 km; anything taller is not a berg or ship
+  grow_db: 4                # region-grow level (dB over background, 3x3 smoothed) around each target
+  max_structure_px: 15      # 300 m: longer grown structures are sea-ice strips (tuned on 2025-05-08)
+  block_rows: 1024          # rows per processing block (memory vs. overhead)
 
 chips:
   size_px: 75               # matches the Kaggle training chips
@@ -73,6 +81,11 @@ classifier:
   learning_rate: 1.0e-3
   use_incidence_angle: true
   seed: 42
+
+ground_truth:
+  # NAIS (IIP + Canadian Ice Service) daily Iceberg Analysis: icebergs per 1-degree square.
+  nais_url: https://www.navcen.uscg.gov/sites/default/files/images/iip/data/{year}/{ymd}_NAIS65.gif
+  min_valid_fraction: 0.2   # compare only squares the scene covers at least this much
 
 output:
   crs: EPSG:4326

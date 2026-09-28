@@ -120,5 +120,83 @@ def preprocess(
         typer.echo(f"{kind:<12} {path}")
 
 
+@app.command()
+def detect(
+    product_dir: Annotated[Path, typer.Argument(help="HyP3 RTC product directory (in data/raw).")],
+    config: ConfigOption = DEFAULT_CONFIG,
+    band: Annotated[str | None, typer.Option(help="Override cfar.band, e.g. HH or HV.")] = None,
+) -> None:
+    """Run CA-CFAR on a preprocessed scene; write detections GeoJSON and an overlay PNG."""
+    import json
+
+    from iceberg_sar.detections import detect_product
+
+    cfg = load_config(config)
+    outputs = detect_product(product_dir, cfg, band=band)
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+    typer.echo(
+        f"band={summary['cfar_band']}  ENL={summary['enl']}  "
+        f"threshold={summary['alpha']}x background ({summary['alpha_db']} dB)  "
+        f"detections={summary['n_detections']}"
+    )
+    for kind, path in outputs.items():
+        typer.echo(f"{kind:<12} {path}")
+
+
+@app.command("ground-truth")
+def ground_truth(
+    day: Annotated[str, typer.Argument(help="Date, YYYY-MM-DD (e.g. the scene date).")],
+    days_around: Annotated[int, typer.Option(help="Also fetch this many days before/after.")] = 1,
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Download NAIS iceberg chart GIFs (IIP + Canadian Ice Service) around a date."""
+    from datetime import date, timedelta
+
+    from iceberg_sar.groundtruth import download_nais_chart
+
+    cfg = load_config(config)
+    url = cfg.section("ground_truth")["nais_url"]
+    d0 = date.fromisoformat(day)
+    out_dir = cfg.path("ground_truth")
+    for k in range(-days_around, days_around + 1):
+        typer.echo(f"ok  {download_nais_chart(d0 + timedelta(days=k), out_dir, url)}")
+
+
+@app.command()
+def validate(
+    product_dir: Annotated[Path, typer.Argument(help="HyP3 RTC product directory (in data/raw).")],
+    counts: Annotated[Path, typer.Option(help="Transcribed NAIS counts CSV.")],
+    band: Annotated[str, typer.Option(help="Which detections to validate.")] = "HV",
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Compare SAR detections per 1-degree square with transcribed NAIS chart counts."""
+    import geopandas as gpd
+
+    from iceberg_sar.groundtruth import (
+        compare_counts,
+        load_degree_counts,
+        valid_fraction_per_square,
+    )
+
+    cfg = load_config(config)
+    name = Path(product_dir).name
+    det = gpd.read_file(cfg.path("outputs") / "detections" / f"{name}_{band}_detections.geojson")
+    masked = cfg.path("interim") / name / f"{name}_{band}_masked.tif"
+    min_frac = cfg.section("ground_truth")["min_valid_fraction"]
+    cmp = compare_counts(det, load_degree_counts(counts), valid_fraction_per_square(masked),
+                         min_frac)
+    shown = cmp[cmp.valid_fraction > 0].drop(columns="geometry")
+    typer.echo(shown.to_string(index=False))
+    used = cmp[cmp.compared]
+    typer.echo()
+    typer.echo(f"squares with >= {min_frac:.0%} coverage: SAR {used.sar_detections.sum()} "
+               f"vs chart (coverage-scaled) {used.expected.sum():.1f}; "
+               f"detections outside listed squares: {len(det) - cmp.sar_detections.sum()}")
+    out = cfg.path("outputs") / "validation" / f"{name}_{band}_nais.geojson"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmp.to_file(out, driver="GeoJSON")
+    typer.echo(f"ok  {out}")
+
+
 if __name__ == "__main__":
     app()

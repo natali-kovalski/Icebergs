@@ -1,0 +1,26 @@
+# NAIS (IIP + Canadian Ice Service) Iceberg Analysis valid 2025-05-08 00:00 UTC.
+# Icebergs per 1-degree square, hand-transcribed from 20250508_NAIS65.gif (US Coast Guard, public domain).
+# lat_min/lon_min = south-west corner. Only squares near the 2025-05-08 Sentinel-1 scene are listed.
+# Chart note: "reduced iceberg reconnaissance"; most recent reconnaissance 06 May 2025.
+lat_min,lon_min,count
+49,-56,1
+49,-55,22
+49,-54,13
+49,-53,12
+49,-52,3
+50,-56,10
+50,-55,9
+50,-54,4
+50,-53,5
+50,-52,9
+51,-57,5
+51,-56,11
+51,-55,2
+51,-54,5
+51,-53,7
+51,-52,3
+52,-56,32
+52,-55,11
+52,-54,2
+52,-53,2
+52,-52,5
