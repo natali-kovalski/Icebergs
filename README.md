@@ -1,8 +1,8 @@
 # Iceberg Alley SAR
 
-Detect icebergs off the coast of Newfoundland & Labrador in Sentinel-1 SAR imagery. Classify each detection as iceberg or ship, and show the results on a CesiumJS globe with a timeline.
+Detect icebergs off the coast of Newfoundland & Labrador in Sentinel-1 SAR imagery. Show the results on a CesiumJS globe with a timeline.
 
-> Work in progress. The full write-up comes in Milestone 5.
+> Work in progress. The full write-up comes in Milestone 4.
 
 ## Setup
 
@@ -11,8 +11,8 @@ Requires Python 3.11+.
 ```powershell
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e ".[dev]"        # add ",ml" for PyTorch + scikit-learn (Milestone 3)
-copy .env.example .env         # then fill in Earthdata and Kaggle credentials
+pip install -e ".[dev]"
+copy .env.example .env         # then fill in Earthdata credentials
 python -m iceberg_sar.cli --help
 python -m iceberg_sar.cli init-dirs
 ```
@@ -48,7 +48,7 @@ Method (parameters in `config.yaml` under `cfar` and `detections`):
 3. **Sea-ice strip rejection.** Each target is grown to the 3×3-smoothed region more than 4 dB above background. If that structure is longer than 300 m, the target sits on a strip of loose ice rather than being a berg or ship.
 
 Outputs in `data/outputs/detections/`:
-- `<product>_<BAND>_detections.geojson`: EPSG:4326 points with `id`, `scene_id`, `timestamp`, `lat`/`lon`, `area_px`, `area_m2`, `extent_m`, `structure_m`, `peak_db_*`/`mean_db_*` per band, `background_db`, `contrast_db`, `incidence_deg`.
+- `<product>_<BAND>_detections.geojson`: EPSG:4326 points with `id`, `scene_id`, `timestamp`, `lat`/`lon`, `area_px`, `area_m2`, `extent_m`, `structure_m`, `peak_db_*`/`mean_db_*` per band, `background_db`, `contrast_db`, `incidence_deg`, `distance_to_ice_km` (to the edge of the buffered pack-ice mask; NaN if the scene has no pack ice).
 - `<product>_<BAND>_detections.png`: dB quicklook with detections circled.
 - `<product>_<BAND>_detections.json`: run summary (ENL, threshold, count).
 
@@ -72,4 +72,4 @@ The chart gives icebergs per 1-degree square, and it is only published as an ima
 
 ## Data terms
 
-Sentinel-1 data is from Copernicus via ASF. The Kaggle Statoil/C-CORE dataset is not redistributed in this repo.
+Sentinel-1 data is from Copernicus via ASF.

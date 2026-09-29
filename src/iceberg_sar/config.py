@@ -10,7 +10,7 @@ import yaml
 
 DEFAULT_CONFIG = Path("config.yaml")
 
-REQUIRED_SECTIONS = ("paths", "search", "hyp3", "preprocess", "cfar", "detections", "chips")
+REQUIRED_SECTIONS = ("paths", "search", "hyp3", "preprocess", "cfar", "detections")
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class Config:
 
     @property
     def data_dirs(self) -> list[Path]:
-        return [self.path(k) for k in ("raw", "interim", "kaggle", "outputs")]
+        return [self.path(k) for k in ("raw", "interim", "outputs")]
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG) -> Config:

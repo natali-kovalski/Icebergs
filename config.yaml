@@ -6,13 +6,12 @@ paths:
   data_dir: data
   raw: data/raw            # HyP3 downloads
   interim: data/interim    # masked / calibrated rasters
-  kaggle: data/kaggle      # Statoil/C-CORE dataset
-  outputs: data/outputs    # detections, chips, CZML
+  outputs: data/outputs    # detections, quicklooks, CZML
   land_mask: data/land/osm_land_aoi.gpkg  # OSM land polygons clipped to AOI (built by `land-mask`)
   ground_truth: data/ground_truth   # NAIS iceberg chart GIFs (downloaded)
 
 search:
-  # Spring 2025: S1A + S1C give dense IW HH+HV coverage (matches Kaggle HH/HV).
+  # Spring 2025: S1A + S1C give dense IW HH+HV coverage (HH/HV: co- and cross-pol, as used for CFAR and the sea-ice mask).
   start_date: "2025-04-01"
   end_date: "2025-06-30"
   platform: SENTINEL-1
@@ -26,7 +25,7 @@ hyp3:
   scale: power              # linear power; convert to dB where needed
   radiometry: gamma0
   dem_matching: false
-  include_inc_map: true     # incidence angle is a classifier feature
+  include_inc_map: true     # incidence angle per detection (backscatter depends on it)
   include_scattering_area: false
 
 preprocess:
@@ -70,17 +69,6 @@ detections:
   grow_db: 4                # region-grow level (dB over background, 3x3 smoothed) around each target
   max_structure_px: 15      # 300 m: longer grown structures are sea-ice strips (tuned on 2025-05-08)
   block_rows: 1024          # rows per processing block (memory vs. overhead)
-
-chips:
-  size_px: 75               # matches the Kaggle training chips
-
-classifier:
-  folds: 5
-  epochs: 40
-  batch_size: 32
-  learning_rate: 1.0e-3
-  use_incidence_angle: true
-  seed: 42
 
 ground_truth:
   # NAIS (IIP + Canadian Ice Service) daily Iceberg Analysis: icebergs per 1-degree square.

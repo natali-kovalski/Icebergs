@@ -4,7 +4,13 @@ import numpy as np
 import rasterio
 from rasterio.transform import from_origin
 
-from iceberg_sar.seaice import apply_coarse_mask, coarse_stats, detect_ice
+from iceberg_sar.seaice import (
+    apply_coarse_mask,
+    coarse_stats,
+    detect_ice,
+    distance_to_ice_km,
+    write_mask,
+)
 
 WATER, ICE = 10 ** (-31 / 10), 10 ** (-20 / 10)
 KW = dict(cell_m=200, min_excess_db=6, max_cv=0.8, min_area_km2=2, strip_min_km2=0.5, buffer_m=0)
@@ -77,3 +83,19 @@ def test_coarse_stats_and_apply_mask_on_uneven_grid(tmp_path: Path) -> None:
     assert np.isnan(out[:10, :10]).all() and np.isnan(out[30:, 40:]).all()
     assert np.isfinite(out[10:30, :]).all()
     assert n == 100 + 5 * 7
+
+
+def test_distance_to_ice_km(tmp_path: Path) -> None:
+    ice = np.zeros((20, 20), dtype=bool)
+    ice[:, :5] = True  # ice in the 5 western columns, 200 m cells
+    path = write_mask(ice, from_origin(0, 4000, 200, 200), "EPSG:32621", tmp_path / "m.tif")
+    xs = np.array([100.0, 1100.0, 3100.0, 99_999.0])  # in ice, 1 cell out, 11 out, off grid
+    d = distance_to_ice_km(path, xs, np.full(4, 2000.0))
+    np.testing.assert_allclose(d[:3], [0.0, 0.2, 2.2])
+    assert np.isnan(d[3])
+
+
+def test_distance_to_ice_km_without_ice_is_nan(tmp_path: Path) -> None:
+    path = write_mask(np.zeros((5, 5), bool), from_origin(0, 1000, 200, 200), "EPSG:32621",
+                      tmp_path / "m.tif")
+    assert np.isnan(distance_to_ice_km(path, np.array([100.0]), np.array([900.0]))).all()

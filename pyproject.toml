@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "iceberg-sar"
 version = "0.1.0"
-description = "Iceberg detection and iceberg-vs-ship classification off Newfoundland in Sentinel-1 SAR imagery."
+description = "Iceberg detection off Newfoundland in Sentinel-1 SAR imagery."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -25,10 +25,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = [
-    "torch>=2.2",
-    "scikit-learn>=1.4",
-]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",

@@ -77,6 +77,20 @@ def test_geodataframe_attributes(scene: dict[str, Path]) -> None:
     assert (gdf["timestamp"] == "2025-05-08T09:49:25Z").all()
     assert (gdf["area_m2"] == 4 * PIX * PIX).all()
     assert gdf["lon"].between(-58, -52).all() and gdf["lat"].between(49, 52).all()
+    assert gdf["distance_to_ice_km"].isna().all()  # no ice mask given
+
+
+def test_distance_to_ice_attribute(scene: dict[str, Path], tmp_path: Path) -> None:
+    from iceberg_sar.seaice import write_mask
+
+    ice = np.zeros((H // 10, W // 10), dtype=bool)
+    ice[25:, 25:] = True  # 200 m cells over the masked patch at rows/cols 250+
+    mask = write_mask(ice, from_origin(X0, Y0, 10 * PIX, 10 * PIX), CRS, tmp_path / "ice.tif")
+    table, transform, crs = _run(scene, 1024)
+    gdf = to_geodataframe(table, transform, crs, NAME, inc_path=None, ice_mask=mask)
+    # ON_BLOCK_EDGE centre (row 50, col 200.5) -> cell (5, 20); COMPACT -> cell (10, 10)
+    expected = [0.2 * np.hypot(20, 5), 0.2 * np.hypot(15, 15)]
+    assert gdf["distance_to_ice_km"].to_numpy() == pytest.approx(expected, abs=0.01)
 
 
 def test_scene_timestamp() -> None:

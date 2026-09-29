@@ -90,7 +90,7 @@ The chart count is scaled by the fraction of each square the masked scene actual
   - Nearshore fishing vessels (the snow-crab season runs in May).
   - The chart undercounting inside sea ice, where reconnaissance is sparse.
 
-**Conclusion:** in open water the detector's counts are consistent with the chart. Inside the chart's sea-ice limit, a large share of detections are probably not icebergs. Masking to the chart's sea-ice limit, or adding `distance_to_ice_km` as a feature, should be the first fix. The Milestone 3 classifier also needs to handle ice floes, not just ships.
+**Conclusion:** in open water the detector's counts are consistent with the chart. Inside the chart's sea-ice limit, a large share of detections are probably not icebergs. Masking to the chart's sea-ice limit, or adding `distance_to_ice_km` as a feature, should be the first fix.
 
 Reproduce:
 ```powershell
@@ -106,7 +106,7 @@ python -m iceberg_sar.cli validate data\raw\S1A_IW_20250508T094925_DHP_RTC20_G_g
 - **Coarse validation only.** The ground truth is per 1° square (about 7,800 km²) and 10 h old, with reconnaissance from 2 days earlier. It can check counts, not individual detections.
 
 ## Next steps
-1. Mask or flag detections west of the NAIS sea-ice limit; add `distance_to_ice_km` (from the Milestone 1 sea-ice mask) as an attribute, to flag or down-weight detections near pack ice. Also useful as a classifier feature in Milestone 3.
+1. Mask or flag detections west of the NAIS sea-ice limit. *Done in part:* each detection now has `distance_to_ice_km`, measured to the edge of the Milestone 1 pack-ice mask (which is already buffered by 1 km). On 8 May, 24 of 126 detections lie within 2 km of it, and chip review shows ice fragments are concentrated there.
 2. Stretch: OS-CFAR or K-distribution CFAR for heavier-tailed clutter (`cfar.variant` is ready for it).
 3. Run on 2–3 more spring scenes to check parameter stability.
 

@@ -24,6 +24,7 @@ from scipy import ndimage
 
 from iceberg_sar.cfar import CfarParams, ca_cfar
 from iceberg_sar.config import Config
+from iceberg_sar.seaice import distance_to_ice_km
 
 SCENE_TIME = re.compile(r"_(\d{8}T\d{6})_")
 EIGHT_CONNECTED = np.ones((3, 3), dtype=bool)
@@ -210,8 +211,13 @@ def to_geodataframe(
     crs: rasterio.crs.CRS,
     scene_id: str,
     inc_path: Path | None,
+    ice_mask: Path | None = None,
 ) -> gpd.GeoDataFrame:
-    """Pixel-space table -> EPSG:4326 points with the attributes used downstream."""
+    """Pixel-space table -> EPSG:4326 points with the attributes used downstream.
+
+    `ice_mask` is the Milestone 1 pack-ice mask (same CRS as the scene); without it
+    `distance_to_ice_km` is NaN.
+    """
     timestamp = scene_timestamp(scene_id)
     if table.empty:
         return gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
@@ -232,6 +238,7 @@ def to_geodataframe(
     gdf["extent_m"] = gdf["extent_px"] * abs(transform.a)
     gdf["structure_m"] = gdf["structure_px"] * abs(transform.a)
     gdf["incidence_deg"] = sample_incidence_deg(inc_path, xs, ys) if inc_path else np.nan
+    gdf["distance_to_ice_km"] = distance_to_ice_km(ice_mask, xs, ys) if ice_mask else np.nan
     gdf["row"] = gdf["row"].round(2)
     gdf["col"] = gdf["col"].round(2)
     num = gdf.select_dtypes("float").columns.difference(["lon", "lat", "row", "col"])
@@ -322,7 +329,9 @@ def detect_product(product_dir: Path, cfg: Config, band: str | None = None) -> d
     )
     table, transform, crs = detect_raster(masked, band, cfar, params)
     inc = find_rtc_bands(product_dir).get("inc") if product_dir.is_dir() else None
-    gdf = to_geodataframe(table, transform, crs, name, inc)
+    ice_mask = interim / f"{name}_seaice_mask.tif"
+    gdf = to_geodataframe(table, transform, crs, name, inc,
+                          ice_mask if ice_mask.is_file() else None)
 
     out_dir = cfg.path("outputs") / "detections"
     out_dir.mkdir(parents=True, exist_ok=True)

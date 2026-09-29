@@ -11,7 +11,7 @@ from iceberg_sar import __version__
 from iceberg_sar.config import DEFAULT_CONFIG, load_config
 
 app = typer.Typer(
-    help="Iceberg Alley SAR: detect and classify icebergs in Sentinel-1 imagery.",
+    help="Iceberg Alley SAR: detect icebergs in Sentinel-1 imagery.",
     no_args_is_help=True,
 )
 

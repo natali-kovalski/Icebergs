@@ -12,7 +12,7 @@ CONFIG = REPO_ROOT / "config.yaml"
 
 def test_repo_config_loads() -> None:
     cfg = load_config(CONFIG)
-    assert cfg.section("chips")["size_px"] == 75
+    assert cfg.section("cfar")["variant"] == "CA"
     assert cfg.path("aoi").is_file()
     assert cfg.path("raw") == (REPO_ROOT / "data" / "raw").resolve()
 

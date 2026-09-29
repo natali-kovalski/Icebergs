@@ -171,3 +171,23 @@ def apply_coarse_mask(path: Path, mask: np.ndarray, factor: int, block_rows: int
             data[fine] = np.nan
             dst.write(data, 1, window=win)
     return n_masked
+
+
+def distance_to_ice_km(mask_path: Path, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Distance (km) from map points (mask CRS) to the nearest masked pack-ice cell.
+
+    Measured to the edge of the *buffered* mask, so the distance to the ice itself is about
+    `buffer_m` more. NaN if the scene has no pack ice or a point is off the grid.
+    """
+    with rasterio.open(mask_path) as src:
+        ice = src.read(1) == 1
+        transform = src.transform
+    if not ice.any():
+        return np.full(len(xs), np.nan)
+    dist_km = ndimage.distance_transform_edt(~ice) * abs(transform.a) / 1000.0
+    rows, cols = rasterio.transform.rowcol(transform, xs, ys)
+    rows, cols = np.asarray(rows), np.asarray(cols)
+    inside = (rows >= 0) & (rows < ice.shape[0]) & (cols >= 0) & (cols < ice.shape[1])
+    out = np.full(len(xs), np.nan)
+    out[inside] = dist_km[rows[inside], cols[inside]]
+    return out

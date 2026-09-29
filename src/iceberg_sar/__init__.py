@@ -1,4 +1,4 @@
-"""Iceberg detection and classification in Sentinel-1 SAR imagery off Newfoundland."""
+"""Iceberg detection in Sentinel-1 SAR imagery off Newfoundland."""
 
 import os
 import sys
