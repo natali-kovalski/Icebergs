@@ -28,6 +28,8 @@ dist/
 # Viewer
 viewer/node_modules/
 viewer/dist/
+viewer/public/data/
+viewer/public/cesium/
 
 # OS / editor
 .DS_Store

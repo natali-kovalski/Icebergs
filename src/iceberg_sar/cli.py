@@ -198,5 +198,23 @@ def validate(
     typer.echo(f"ok  {out}")
 
 
+@app.command()
+def czml(
+    config: ConfigOption = DEFAULT_CONFIG,
+    band: Annotated[str, typer.Option(help="Which detections to export.")] = "HV",
+) -> None:
+    """Export all scenes' detections, footprints and pack ice to one CZML for the viewer."""
+    from iceberg_sar.export_czml import export_czml
+
+    cfg = load_config(config)
+    out, packets = export_czml(cfg, band)
+    for p in packets:
+        if p["id"].startswith("scene/"):
+            s = p["properties"]
+            typer.echo(f"{s['start'][:10]}  {s['scene_id']}  detections={s['n_detections']}  "
+                       f"open water={s['n_open_water']}  near ice={s['n_near_ice']}")
+    typer.echo(f"ok  {out}")
+
+
 if __name__ == "__main__":
     app()

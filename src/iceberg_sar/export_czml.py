@@ -1,0 +1,293 @@
+"""Detections, scene footprints and pack ice -> one time-dynamic CZML document for Cesium.
+
+Each scene is shown from its acquisition time until the next scene starts, so scrubbing
+the Cesium timeline steps through the dates. Detections keep all their attributes as CZML
+`properties`; `near_ice` flags candidates close to mapped pack ice (likely floes), which
+the viewer greys out or hides instead of deleting them.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+import geopandas as gpd
+import numpy as np
+from matplotlib import colormaps
+from shapely.geometry import Polygon
+from shapely.geometry.base import BaseGeometry
+
+from iceberg_sar.config import Config
+
+NEAR_ICE_RGBA = [150, 150, 150, 200]
+FOOTPRINT_RGBA = [255, 210, 60, 255]
+ICE_RGBA = [120, 200, 255, 90]
+
+
+@dataclass(frozen=True)
+class ViewerParams:
+    near_ice_km: float = 5.0
+    last_interval_days: float = 6.0   # display time for the last scene (S1A+S1C revisit)
+    contrast_db_range: tuple[float, float] = (10.0, 20.0)
+    colormap: str = "plasma"
+    point_px_range: tuple[float, float] = (6.0, 16.0)
+    structure_m_max: float = 300.0    # = detections.max_structure_px at 20 m
+    simplify_m: float = 100.0         # polygon simplification before reprojecting
+
+
+@dataclass(frozen=True)
+class Scene:
+    name: str
+    start: datetime
+    detections: Path
+    footprint: Path | None
+    seaice: Path | None
+
+
+def _iso(t: datetime) -> str:
+    return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse(ts: str) -> datetime:
+    return datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
+
+
+def scene_intervals(starts: list[datetime], last_days: float) -> list[tuple[datetime, datetime]]:
+    """[start_i, start_{i+1}) per scene; the last one stays visible for `last_days`."""
+    ends = starts[1:] + [starts[-1] + timedelta(days=last_days)] if starts else []
+    return list(zip(starts, ends, strict=True))
+
+
+def near_ice(distance_km: np.ndarray, threshold_km: float) -> np.ndarray:
+    """True where a detection is closer than `threshold_km` to pack ice (NaN = no ice mapped)."""
+    d = np.asarray(distance_km, dtype=float)
+    return np.nan_to_num(d, nan=np.inf) < threshold_km
+
+
+def contrast_rgba(contrast_db: float, p: ViewerParams) -> list[int]:
+    lo, hi = p.contrast_db_range
+    t = 0.0 if not math.isfinite(contrast_db) else min(max((contrast_db - lo) / (hi - lo), 0), 1)
+    r, g, b, _ = colormaps[p.colormap](0.15 + 0.85 * t)   # skip the near-black end
+    return [round(255 * r), round(255 * g), round(255 * b), 255]
+
+
+def point_px(structure_m: float, p: ViewerParams) -> float:
+    lo, hi = p.point_px_range
+    t = 0.0 if not math.isfinite(structure_m) else min(max(structure_m / p.structure_m_max, 0), 1)
+    return round(lo + (hi - lo) * math.sqrt(t), 1)
+
+
+def _ring(coords: Any) -> list[float]:
+    out: list[float] = []
+    for x, y in coords:
+        out += [round(x, 5), round(y, 5), 0.0]
+    return out
+
+
+def _polygons(geom: BaseGeometry) -> list[Polygon]:
+    if geom.is_empty:
+        return []
+    return list(geom.geoms) if hasattr(geom, "geoms") else [geom]  # type: ignore[list-item]
+
+
+def _to_wgs84(gdf: gpd.GeoDataFrame, simplify_m: float) -> gpd.GeoDataFrame:
+    metric = gdf if gdf.crs and gdf.crs.is_projected else gdf.to_crs(gdf.estimate_utm_crs())
+    metric = metric.assign(geometry=metric.geometry.simplify(simplify_m))
+    return metric.to_crs("EPSG:4326")
+
+
+def _num(value: Any, fmt: str = ".1f") -> str:
+    """Formatted number, or an en dash for missing values (None / NaN)."""
+    if value is None or (isinstance(value, float) and not math.isfinite(value)):
+        return "–"
+    return format(value, fmt)
+
+
+def _distance_text(km: Any, flag: bool) -> str:
+    if km is None or not math.isfinite(km):
+        return "no pack ice mapped"
+    return f"{km:.1f} km" + (" (near ice: likely floe)" if flag else "")
+
+
+def _description(props: dict[str, Any]) -> str:
+    g = props.get
+    rows = [
+        ("Scene", props["scene_id"]),
+        ("Time (UTC)", props["timestamp"]),
+        ("Lat / lon", f"{_num(g('lat'), '.4f')}, {_num(g('lon'), '.4f')}"),
+        ("Area", f"{_num(g('area_m2'), '.0f')} m² ({_num(g('area_px'), 'd')} px)"),
+        ("Structure", f"{_num(g('structure_m'), '.0f')} m"),
+        ("Peak HV / HH", f"{_num(g('peak_db_HV'))} / {_num(g('peak_db_HH'))} dB"),
+        ("Mean HV / HH", f"{_num(g('mean_db_HV'))} / {_num(g('mean_db_HH'))} dB"),
+        ("Contrast", f"{_num(g('contrast_db'))} dB over {_num(g('background_db'))} dB"),
+        ("Incidence", f"{_num(g('incidence_deg'))}°"),
+        ("Distance to ice", _distance_text(g("distance_to_ice_km"), props["near_ice"])),
+    ]
+    body = "".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows)
+    return f'<table class="cesium-infoBox-defaultTable"><tbody>{body}</tbody></table>'
+
+
+def _clean(value: Any) -> Any:
+    """JSON-safe scalar: NaN -> None, numpy -> Python."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def detection_packets(gdf: gpd.GeoDataFrame, availability: str, p: ViewerParams
+                      ) -> list[dict[str, Any]]:
+    if gdf.empty:
+        return []
+    flags = near_ice(gdf["distance_to_ice_km"].to_numpy(), p.near_ice_km)
+    packets = []
+    for (_, row), flag in zip(gdf.iterrows(), flags, strict=True):
+        raw = row.drop(labels="geometry").to_dict()
+        raw["timestamp"] = str(row["timestamp"])[:19].replace(" ", "T") + "Z"
+        raw["near_ice"] = bool(flag)
+        props = {k: _clean(v) for k, v in raw.items()}
+        rgba = NEAR_ICE_RGBA if flag else contrast_rgba(float(row["contrast_db"]), p)
+        size = p.point_px_range[0] if flag else point_px(float(row["structure_m"]), p)
+        packets.append({
+            "id": f"det/{row['id']}",
+            "name": f"Candidate {row['id']}",
+            "parent": f"scene/{row['scene_id']}",
+            "availability": availability,
+            "description": _description(raw),
+            "position": {"cartographicDegrees": [float(row["lon"]), float(row["lat"]), 0.0]},
+            "point": {
+                "pixelSize": size,
+                "color": {"rgba": rgba},
+                "outlineColor": {"rgba": [0, 0, 0, 255]},
+                "outlineWidth": 1,
+            },
+            "properties": props,
+        })
+    return packets
+
+
+def polygon_packets(geom: BaseGeometry, id_prefix: str, availability: str,
+                    fill_rgba: list[int] | None, outline_rgba: list[int]
+                    ) -> list[dict[str, Any]]:
+    packets = []
+    for i, poly in enumerate(_polygons(geom)):
+        polygon: dict[str, Any] = {
+            "positions": {"cartographicDegrees": _ring(poly.exterior.coords)},
+            "height": 0,
+            "fill": fill_rgba is not None,
+            "outline": True,
+            "outlineColor": {"rgba": outline_rgba},
+        }
+        if fill_rgba is not None:
+            polygon["material"] = {"solidColor": {"color": {"rgba": fill_rgba}}}
+        if poly.interiors:
+            polygon["holes"] = {"cartographicDegrees": [_ring(r.coords) for r in poly.interiors]}
+        packets.append({"id": f"{id_prefix}/{i}", "availability": availability,
+                        "polygon": polygon})
+    return packets
+
+
+def find_scenes(cfg: Config, band: str) -> list[Scene]:
+    """Scenes with a detections GeoJSON for `band`, sorted by acquisition time."""
+    det_dir = cfg.path("outputs") / "detections"
+    scenes = []
+    for f in det_dir.glob(f"*_{band}_detections.geojson"):
+        name = f.name.removesuffix(f"_{band}_detections.geojson")
+        summary = json.loads(f.with_suffix(".json").read_text(encoding="utf-8"))
+        shp = cfg.path("raw") / name / f"{name}_shape.shp"
+        ice = cfg.path("outputs") / "seaice" / f"{name}_seaice.geojson"
+        scenes.append(Scene(name, _parse(summary["timestamp"]), f,
+                            shp if shp.is_file() else None, ice if ice.is_file() else None))
+    return sorted(scenes, key=lambda s: s.start)
+
+
+def build_czml(scenes: list[Scene], p: ViewerParams) -> list[dict[str, Any]]:
+    if not scenes:
+        raise ValueError("No scenes with detections; run `detect` first")
+    intervals = scene_intervals([s.start for s in scenes], p.last_interval_days)
+    t0, t1 = intervals[0][0], intervals[-1][1]
+    doc: dict[str, Any] = {
+        "id": "document",
+        "name": "Iceberg Alley SAR detections",
+        "version": "1.0",
+        "clock": {
+            "interval": f"{_iso(t0)}/{_iso(t1)}",
+            "currentTime": _iso(t0),
+            "multiplier": 3600,
+            "range": "CLAMPED",
+            "step": "SYSTEM_CLOCK_MULTIPLIER",
+        },
+    }
+    legend = {
+        "id": "legend",
+        "properties": {
+            "near_ice_km": p.near_ice_km,
+            "contrast_db_min": p.contrast_db_range[0],
+            "contrast_db_max": p.contrast_db_range[1],
+        },
+    }
+    packets: list[dict[str, Any]] = [doc, legend]
+    for i, (scene, (start, end)) in enumerate(zip(scenes, intervals, strict=True)):
+        # CZML intervals include their end; stop 1 s early so two scenes never show at once.
+        shown_until = end - timedelta(seconds=1) if i < len(scenes) - 1 else end
+        avail = f"{_iso(start)}/{_iso(shown_until)}"
+        gdf = gpd.read_file(scene.detections)
+        flags = (near_ice(gdf["distance_to_ice_km"].to_numpy(), p.near_ice_km) if len(gdf)
+                 else np.zeros(0, dtype=bool))
+        ice_km2 = 0.0
+        if scene.seaice:
+            ice = gpd.read_file(scene.seaice)
+            ice_km2 = float(ice["area_km2"].sum()) if "area_km2" in ice else 0.0
+        packets.append({
+            "id": f"scene/{scene.name}",
+            "name": scene.name,
+            "availability": avail,
+            "properties": {
+                "scene_id": scene.name,
+                "platform": scene.name[:3],
+                "start": _iso(start),
+                "end": _iso(end),
+                "n_detections": len(gdf),
+                "n_near_ice": int(np.sum(flags)),
+                "n_open_water": int(len(gdf) - np.sum(flags)),
+                "ice_area_km2": round(ice_km2, 1),
+            },
+        })
+        if scene.footprint:
+            fp = gpd.read_file(scene.footprint)   # HyP3 shape: valid-data polygons, UTM
+            fp = _to_wgs84(fp.iloc[[int(fp.area.argmax())]], p.simplify_m)
+            packets += polygon_packets(fp.geometry.iloc[0], f"footprint/{scene.name}", avail, None,
+                                       FOOTPRINT_RGBA)
+        if scene.seaice:
+            ice_geom = _to_wgs84(gpd.read_file(scene.seaice), p.simplify_m).union_all()
+            packets += polygon_packets(ice_geom, f"seaice/{scene.name}", avail, ICE_RGBA,
+                                       ICE_RGBA[:3] + [200])
+        packets += detection_packets(gdf, avail, p)
+    return packets
+
+
+def viewer_params(cfg: Config) -> ViewerParams:
+    v = cfg.raw.get("viewer", {})
+    d = ViewerParams()
+    return ViewerParams(
+        near_ice_km=float(v.get("near_ice_km", d.near_ice_km)),
+        last_interval_days=float(v.get("last_interval_days", d.last_interval_days)),
+        contrast_db_range=tuple(v.get("contrast_db_range", d.contrast_db_range)),  # type: ignore[arg-type]
+        colormap=str(v.get("colormap", d.colormap)),
+        point_px_range=tuple(v.get("point_px_range", d.point_px_range)),  # type: ignore[arg-type]
+        structure_m_max=float(v.get("structure_m_max", d.structure_m_max)),
+        simplify_m=float(v.get("simplify_m", d.simplify_m)),
+    )
+
+
+def export_czml(cfg: Config, band: str = "HV") -> tuple[Path, list[dict[str, Any]]]:
+    packets = build_czml(find_scenes(cfg, band), viewer_params(cfg))
+    out = cfg.path("czml")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(packets, separators=(",", ":")), encoding="utf-8")
+    return out, packets

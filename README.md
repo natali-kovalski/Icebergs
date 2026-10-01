@@ -61,13 +61,30 @@ python -m iceberg_sar.cli validate data\raw\<product_dir> --counts validation\na
 
 The chart gives icebergs per 1-degree square, and it is only published as an image. For each new date, transcribe the squares covering the scene into a CSV like `validation/nais_20250508_counts.csv`. Findings: [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
 
+## Milestone 3: Cesium viewer
+
+A Vue 3 + CesiumJS app. The timeline steps through the scenes, and you can click a candidate to see its attributes.
+
+```powershell
+python -m iceberg_sar.cli czml        # all *_HV_detections.geojson -> viewer/public/data/iceberg_alley.czml
+cd viewer
+npm install
+npm run dev                           # http://localhost:5173
+```
+
+- Each scene stays on the timeline until the next scene starts. The last one stays for `viewer.last_interval_days`.
+- Candidates within `viewer.near_ice_km` (default 5 km) of the pack-ice mask are grey and flagged `near_ice`. They are likely ice floes (88% of the 2025-05-02 detections). The **Near-ice candidates** checkbox hides them. Nothing is deleted.
+- Open-water candidates are coloured by `contrast_db` and sized by `structure_m`. The scene footprint and pack-ice mask can be toggled.
+- The basemap is Esri World Imagery, so no Cesium ion token is needed. You can set `VITE_CESIUM_ION_TOKEN` in `viewer/.env` to enable ion services.
+- `npm run build` writes a static site to `viewer/dist/` that any static host can serve.
+
 ## Layout
 
 - `config.yaml`: all pipeline parameters.
 - `aoi.geojson`: area of interest (EPSG:4326).
 - `src/iceberg_sar/`: pipeline code.
 - `data/`: raw, interim, and output data. It is gitignored.
-- `viewer/`: CesiumJS front end.
+- `viewer/`: Vue + CesiumJS front end (`src/scene.ts` holds the Cesium logic).
 - `notebooks/`: exploration only.
 
 ## Data terms

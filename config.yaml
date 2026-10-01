@@ -9,6 +9,7 @@ paths:
   outputs: data/outputs    # detections, quicklooks, CZML
   land_mask: data/land/osm_land_aoi.gpkg  # OSM land polygons clipped to AOI (built by `land-mask`)
   ground_truth: data/ground_truth   # NAIS iceberg chart GIFs (downloaded)
+  czml: viewer/public/data/iceberg_alley.czml   # written by `czml`, served by the Vue viewer (gitignored)
 
 search:
   # Spring 2025: S1A + S1C give dense IW HH+HV coverage (HH/HV: co- and cross-pol, as used for CFAR and the sea-ice mask).
@@ -74,6 +75,16 @@ ground_truth:
   # NAIS (IIP + Canadian Ice Service) daily Iceberg Analysis: icebergs per 1-degree square.
   nais_url: https://www.navcen.uscg.gov/sites/default/files/images/iip/data/{year}/{ymd}_NAIS65.gif
   min_valid_fraction: 0.2   # compare only squares the scene covers at least this much
+
+viewer:
+  # CZML styling. Nothing is dropped: near-ice candidates are greyed out and can be hidden.
+  near_ice_km: 5            # closer than this to pack ice = likely floe (88% of 2025-05-02 detections)
+  last_interval_days: 6     # how long the last scene stays on the timeline (S1A+S1C revisit)
+  contrast_db_range: [10, 20]   # colour ramp for contrast over background (~p10-p90 at sea)
+  colormap: plasma
+  point_px_range: [6, 16]   # point size from structure_m (0 .. structure_m_max)
+  structure_m_max: 300
+  simplify_m: 100           # footprint / pack-ice outline simplification
 
 output:
   crs: EPSG:4326
