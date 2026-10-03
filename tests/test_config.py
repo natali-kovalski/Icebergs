@@ -4,7 +4,7 @@ import pytest
 from typer.testing import CliRunner
 
 from iceberg_sar.cli import app
-from iceberg_sar.config import load_config
+from iceberg_sar.config import load_config, metres_to_px
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = REPO_ROOT / "config.yaml"
@@ -35,3 +35,9 @@ def test_cli_help_and_info() -> None:
     result = runner.invoke(app, ["info", "--config", str(CONFIG)])
     assert result.exit_code == 0, result.output
     assert "aoi:" in result.output
+
+
+def test_metres_to_px_scales_with_resolution() -> None:
+    assert metres_to_px(400, 20) == 20
+    assert metres_to_px(400, 10) == 40
+    assert metres_to_px(5, 20) == 1  # never below one pixel

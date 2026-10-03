@@ -76,7 +76,7 @@ def cfg(tmp_path: Path) -> Config:
                      crs="EPSG:32621").to_file(raw / f"{first}_shape.shp")
     return Config(root=tmp_path, raw={"paths": {
         "raw": "data/raw", "outputs": "data/outputs", "czml": "viewer/public/data/out.czml",
-    }})
+    }, "hyp3": {"resolution": 20}})
 
 
 def test_scene_intervals_chain_and_last_window() -> None:
@@ -88,6 +88,18 @@ def test_scene_intervals_chain_and_last_window() -> None:
 def test_near_ice_treats_nan_as_open_water() -> None:
     np.testing.assert_array_equal(near_ice(np.array([0.5, 5.0, 12.0, np.nan]), 5.0),
                                   [True, False, False, False])
+
+
+def test_find_scenes_only_configured_resolution(cfg: Config) -> None:
+    det_dir = cfg.path("outputs") / "detections"
+    name = "S1A_IW_20250508T094925_DHP_RTC10_G_gpuned_1234"
+    _detections(name, "2025-05-08T09:49:25Z", [1.0]).to_file(
+        det_dir / f"{name}_HV_detections.geojson", driver="GeoJSON")
+    (det_dir / f"{name}_HV_detections.json").write_text(
+        json.dumps({"product": name, "timestamp": "2025-05-08T09:49:25Z"}), encoding="utf-8")
+    assert [s.name for s in find_scenes(cfg, "HV")] == list(SCENES)
+    cfg.raw["hyp3"]["resolution"] = 10
+    assert [s.name for s in find_scenes(cfg, "HV")] == [name]
 
 
 def test_point_size_grows_with_structure() -> None:

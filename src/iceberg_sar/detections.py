@@ -22,11 +22,12 @@ import rasterio
 from rasterio.windows import Window
 from scipy import ndimage
 
-from iceberg_sar.cfar import CfarParams, ca_cfar
-from iceberg_sar.config import Config
+from iceberg_sar.cfar import CfarParams, ca_cfar, ring_mean
+from iceberg_sar.config import Config, metres_to_px
 from iceberg_sar.seaice import distance_to_ice_km
 
 SCENE_TIME = re.compile(r"_(\d{8}T\d{6})_")
+COPOL = {"HV": "HH", "VH": "VV"}  # co-pol partner of each cross-pol CFAR band
 EIGHT_CONNECTED = np.ones((3, 3), dtype=bool)
 
 
@@ -38,6 +39,7 @@ class DetectionParams:
     max_extent_px: int = 64  # tallest target a block can hold; bigger ones are dropped
     grow_db: float = 4.0  # region-growing level above background for `bright_structures`
     max_structure_px: int = 15  # reject targets on bright structures longer than this
+    copol_min_contrast_db: float | None = None  # co-pol peak over co-pol background; None = off
     block_rows: int = 1024
 
 
@@ -95,12 +97,14 @@ def component_table(
     keep_rows: tuple[int, int],
     trusted_stop: int,
     p: DetectionParams,
+    copol: tuple[str, np.ndarray] | None = None,
 ) -> pd.DataFrame:
     """Per-target stats for connected components of `det` in one block (pixel coords global).
 
     `keep_rows` = [start, stop) of this block's core rows (global); `trusted_stop` = first
     untrusted global row at the bottom of the block. `structures` is the grown mask from
     `bright_structures`; a target's structure extent is that of the grown blob containing it.
+    `copol` = (band, ring-mean background) of the co-pol band, for the co-pol check.
     """
     labels, n = ndimage.label(det, structure=EIGHT_CONNECTED)
     if n == 0:
@@ -149,6 +153,13 @@ def component_table(
         out[f"peak_db_{pol}"] = to_db(ndimage.maximum(vals, labels, k))
         out[f"mean_db_{pol}"] = to_db(mean)
     out["contrast_db"] = out[f"peak_db_{cfar_band}"] - out["background_db"]
+    if copol is not None:
+        pol, bg = copol
+        out["copol_contrast_db"] = out[f"peak_db_{pol}"] - to_db(ndimage.mean(bg, labels, k))
+        if p.copol_min_contrast_db is not None:
+            # Icebergs stand out in co- and cross-pol; HV speckle spikes have no HH support.
+            # NaN (no co-pol background) fails the test, like a masked CFAR ring.
+            out = out[out["copol_contrast_db"] >= p.copol_min_contrast_db]
     return out
 
 
@@ -160,6 +171,7 @@ def detect_raster(
 ) -> tuple[pd.DataFrame, rasterio.Affine, rasterio.crs.CRS]:
     """Block-wise CFAR + component extraction over co-registered masked rasters."""
     halo = cfar.background_px + p.edge_buffer_px + p.max_extent_px
+    copol_band = COPOL.get(cfar_band, "")
     trusted_margin = cfar.background_px + p.edge_buffer_px
     srcs = {pol: rasterio.open(path) for pol, path in paths.items()}
     try:
@@ -181,8 +193,12 @@ def detect_raster(
             edge = near_invalid(np.isfinite(x), p.edge_buffer_px)
             grown = bright_structures(x, bg, p.grow_db)
             trusted_stop = h if w1 == h else w1 - trusted_margin
+            copol = None
+            if copol_band in bands and det.any():
+                copol_bg, _ = ring_mean(bands[copol_band], cfar.guard_px, cfar.background_px)
+                copol = (copol_band, copol_bg)
             t = component_table(det, bands, cfar_band, bg, edge, grown, w0, (r0, r1),
-                                trusted_stop, p)
+                                trusted_stop, p, copol)
             if not t.empty:
                 tables.append(t)
         return (pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(),
@@ -315,16 +331,25 @@ def detect_product(product_dir: Path, cfg: Config, band: str | None = None) -> d
     if band not in masked:
         raise ValueError(f"CFAR band {want} (or {band}) not in {sorted(masked)}")
 
-    enl = resolve_enl(c.get("enl", "auto"), masked[band], int(c.get("enl_cell_px", 10)))
+    with rasterio.open(masked[band]) as src:
+        pixel_m = abs(src.transform.a)
+
+    def px(metres: float) -> int:
+        return metres_to_px(float(metres), pixel_m)
+
+    enl = resolve_enl(c.get("enl", "auto"), masked[band], px(c.get("enl_cell_m", 500)))
     cfar = CfarParams(
-        guard_px=int(c["guard_px"]), background_px=int(c["background_px"]), pfa=float(c["pfa"]),
+        guard_px=px(c["guard_m"]), background_px=px(c["background_m"]), pfa=float(c["pfa"]),
         enl=enl, min_background_fraction=float(c.get("min_background_fraction", 0.5)),
     )
     params = DetectionParams(
-        min_area_px=int(d["min_area_px"]), max_area_px=int(d["max_area_px"]),
-        edge_buffer_px=int(d["edge_buffer_px"]), max_extent_px=int(d.get("max_extent_px", 64)),
+        min_area_px=int(d["min_area_px"]),
+        max_area_px=metres_to_px(float(d["max_area_m2"]), pixel_m**2),
+        edge_buffer_px=px(d["edge_buffer_m"]), max_extent_px=px(d.get("max_extent_m", 1280)),
         grow_db=float(d.get("grow_db", 4.0)),
-        max_structure_px=int(d.get("max_structure_px", 15)),
+        max_structure_px=px(d.get("max_structure_m", 300)),
+        copol_min_contrast_db=(None if d.get("copol_min_contrast_db") is None
+                               else float(d["copol_min_contrast_db"])),
         block_rows=int(d.get("block_rows", 1024)),
     )
     table, transform, crs = detect_raster(masked, band, cfar, params)
@@ -352,6 +377,7 @@ def detect_product(product_dir: Path, cfg: Config, band: str | None = None) -> d
         "product": name,
         "timestamp": scene_timestamp(name),
         "cfar_band": band,
+        "pixel_m": pixel_m,
         "guard_px": cfar.guard_px,
         "background_px": cfar.background_px,
         "pfa": cfar.pfa,

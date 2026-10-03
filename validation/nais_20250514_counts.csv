@@ -1,0 +1,28 @@
+# NAIS (IIP + Canadian Ice Service) Iceberg Analysis valid 2025-05-14 00:00 UTC.
+# Icebergs per 1-degree square, hand-transcribed from the CIS copy 20250514_CIS_WIS65.gif
+# (1604x2103, https://ice-glaces.ec.gc.ca/www_archive/AOI_06/Charts/sc_a06_20250514_WIS65.gif),
+# cross-checked against 20250514_NAIS65.gif. lat_min/lon_min = south-west corner.
+# Only squares near the 2025-05-14 Sentinel-1 scene are listed. Sea-ice limit near 54.5W.
+lat_min,lon_min,count
+49,-56,3
+49,-55,21
+49,-54,8
+49,-53,7
+49,-52,4
+50,-57,1
+50,-56,30
+50,-55,15
+50,-54,5
+50,-53,5
+50,-52,6
+51,-57,17
+51,-56,52
+51,-55,11
+51,-54,4
+51,-53,8
+51,-52,1
+52,-56,33
+52,-55,2
+52,-54,1
+52,-53,0
+52,-52,6

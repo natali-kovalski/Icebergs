@@ -69,6 +69,24 @@ def test_detects_compact_targets_only(scene: dict[str, Path], block_rows: int) -
     assert (table["contrast_db"] > 15).all()
 
 
+def test_copol_check_drops_cross_pol_only_target(scene: dict[str, Path]) -> None:
+    with rasterio.open(scene["HH"]) as src:
+        hh = src.read(1)
+    hh[COMPACT[0] : COMPACT[0] + 2, COMPACT[1] : COMPACT[1] + 2] = 0.01  # sea level in HH
+    scene = {**scene, "HH": _write(scene["HH"].with_name("hh_flat.tif"), hh)}
+    cfar = CfarParams(guard_px=3, background_px=10, pfa=1e-6, enl=4.0)
+
+    def found(min_db: float | None) -> set[tuple[int, int]]:
+        p = DetectionParams(min_area_px=2, max_area_px=500, edge_buffer_px=10,
+                            max_extent_px=20, copol_min_contrast_db=min_db)
+        table, _, _ = detect_raster(scene, "HV", cfar, p)
+        return {(round(r - 0.5), round(c - 0.5)) for r, c in zip(table.row, table.col,
+                                                                    strict=True)}
+
+    assert found(None) == {COMPACT, ON_BLOCK_EDGE}
+    assert found(6.0) == {ON_BLOCK_EDGE}
+
+
 def test_geodataframe_attributes(scene: dict[str, Path]) -> None:
     table, transform, crs = _run(scene, 1024)
     gdf = to_geodataframe(table, transform, crs, NAME, inc_path=None)

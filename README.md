@@ -43,12 +43,13 @@ python -m iceberg_sar.cli detect data\raw\<product_dir> --band HH    # compare a
 ```
 
 Method (parameters in `config.yaml` under `cfar` and `detections`):
-1. **CA-CFAR** on linear intensity. The clutter level is the mean of a background ring (41×41 window minus an 11×11 guard). A pixel is a detection if it is brighter than `alpha` × that mean. `alpha` comes from `pfa` under a gamma speckle model: the pixel/ring-mean ratio is F(2L, 2NL) distributed. The ENL `L` is estimated from the scene (`enl: auto`). Masked pixels are excluded from the ring.
-2. **Connected components** (8-connected), 2–2000 px. Components within 200 m of land, pack ice, or nodata are dropped.
+1. **CA-CFAR** on linear intensity. The clutter level is the mean of a background ring (400 m half-width minus a 100 m guard; window sizes are set in metres and converted per scene, e.g. 81×81 minus 21×21 px at 10 m). A pixel is a detection if it is brighter than `alpha` × that mean. `alpha` comes from `pfa` under a gamma speckle model: the pixel/ring-mean ratio is F(2L, 2NL) distributed. The ENL `L` is estimated from the scene (`enl: auto`). Masked pixels are excluded from the ring.
+2. **Connected components** (8-connected), at least 2 px and at most 0.8 km². Components within 200 m of land, pack ice, or nodata are dropped.
 3. **Sea-ice strip rejection.** Each target is grown to the 3×3-smoothed region more than 4 dB above background. If that structure is longer than 300 m, the target sits on a strip of loose ice rather than being a berg or ship.
+4. **Co-pol (HH) check.** The target's HH peak must be at least 6 dB above the HH ring mean (`copol_min_contrast_db`). Icebergs are bright in both polarizations; HV speckle spikes are not. This matters at 10 m: Sentinel-1 IW GRD has ~20 m true resolution, so 10 m pixels are oversampled, speckle grains span ~2×2 px, and the 2 px minimum alone lets them through.
 
 Outputs in `data/outputs/detections/`:
-- `<product>_<BAND>_detections.geojson`: EPSG:4326 points with `id`, `scene_id`, `timestamp`, `lat`/`lon`, `area_px`, `area_m2`, `extent_m`, `structure_m`, `peak_db_*`/`mean_db_*` per band, `background_db`, `contrast_db`, `incidence_deg`, `distance_to_ice_km` (to the edge of the buffered pack-ice mask; NaN if the scene has no pack ice).
+- `<product>_<BAND>_detections.geojson`: EPSG:4326 points with `id`, `scene_id`, `timestamp`, `lat`/`lon`, `area_px`, `area_m2`, `extent_m`, `structure_m`, `peak_db_*`/`mean_db_*` per band, `background_db`, `contrast_db`, `copol_contrast_db`, `incidence_deg`, `distance_to_ice_km` (to the edge of the buffered pack-ice mask; NaN if the scene has no pack ice).
 - `<product>_<BAND>_detections.png`: dB quicklook with detections circled.
 - `<product>_<BAND>_detections.json`: run summary (ENL, threshold, count).
 

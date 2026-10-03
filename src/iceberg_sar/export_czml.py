@@ -35,7 +35,7 @@ class ViewerParams:
     contrast_db_range: tuple[float, float] = (10.0, 20.0)
     colormap: str = "plasma"
     point_px_range: tuple[float, float] = (6.0, 16.0)
-    structure_m_max: float = 300.0    # = detections.max_structure_px at 20 m
+    structure_m_max: float = 300.0    # = detections.max_structure_m
     simplify_m: float = 100.0         # polygon simplification before reprojecting
 
 
@@ -193,10 +193,15 @@ def polygon_packets(geom: BaseGeometry, id_prefix: str, availability: str,
 
 
 def find_scenes(cfg: Config, band: str) -> list[Scene]:
-    """Scenes with a detections GeoJSON for `band`, sorted by acquisition time."""
+    """Scenes with a detections GeoJSON for `band` at the configured HyP3 resolution, by time.
+
+    Filtering on the product's RTC resolution (e.g. `_RTC10_`) keeps a date from showing
+    twice when it was processed at both 20 m and 10 m.
+    """
     det_dir = cfg.path("outputs") / "detections"
+    rtc = f"_RTC{int(cfg.section('hyp3')['resolution'])}_"
     scenes = []
-    for f in det_dir.glob(f"*_{band}_detections.geojson"):
+    for f in det_dir.glob(f"*{rtc}*_{band}_detections.geojson"):
         name = f.name.removesuffix(f"_{band}_detections.geojson")
         summary = json.loads(f.with_suffix(".json").read_text(encoding="utf-8"))
         shp = cfg.path("raw") / name / f"{name}_shape.shp"

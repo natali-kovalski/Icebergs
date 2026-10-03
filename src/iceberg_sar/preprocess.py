@@ -25,7 +25,7 @@ from rasterio.windows import Window  # noqa: E402
 from shapely.geometry import box  # noqa: E402
 from shapely.geometry.base import BaseGeometry  # noqa: E402
 
-from iceberg_sar.config import Config  # noqa: E402
+from iceberg_sar.config import Config, metres_to_px  # noqa: E402
 from iceberg_sar.seaice import (  # noqa: E402
     apply_coarse_mask,
     coarse_stats,
@@ -194,7 +194,8 @@ def mask_sea_ice(
     band = next((b for b in (ice_cfg.get("band", "HV"), "HV", "VH") if b in masked), None)
     if band is None:
         raise ValueError("Sea-ice mask needs a cross-pol band (HV or VH)")
-    factor = int(ice_cfg["cell_px"])
+    with rasterio.open(masked[band]) as src:
+        factor = metres_to_px(float(ice_cfg["cell_m"]), abs(src.transform.a))
     st = coarse_stats(masked[band], factor)
     cell_m = abs(st.transform.a)
     ice, water_db = detect_ice(

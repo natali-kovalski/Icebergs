@@ -37,6 +37,11 @@ class Config:
         return [self.path(k) for k in ("raw", "interim", "outputs")]
 
 
+def metres_to_px(metres: float, pixel_m: float, minimum: int = 1) -> int:
+    """Config lengths are in metres so they hold at any resolution; round to whole pixels."""
+    return max(minimum, round(metres / pixel_m))
+
+
 def load_config(path: str | Path = DEFAULT_CONFIG) -> Config:
     config_path = Path(path).resolve()
     if not config_path.is_file():
