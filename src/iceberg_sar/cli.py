@@ -216,5 +216,88 @@ def czml(
     typer.echo(f"ok  {out}")
 
 
+
+@app.command("iip-sightings")
+def iip_sightings(
+    seasons: Annotated[list[int], typer.Argument(help="Seasons, e.g. 2019 (Oct 2018-Sep 2019).")],
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Download IIP Iceberg Sightings Database seasons (NSIDC G00807, up to 2021)."""
+    from iceberg_sar.iip import download_season
+
+    cfg = load_config(config)
+    for season in seasons:
+        out_dir = cfg.root / cfg.section("validation")["iip_dir"]
+        typer.echo(f"ok  {download_season(season, out_dir)}")
+
+
+@app.command("s2-targets")
+def s2_targets(
+    product_dir: Annotated[Path, typer.Argument(help="HyP3 RTC product directory (in data/raw).")],
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Extract Sentinel-2 optical targets on the scene's date over its footprint."""
+    from iceberg_sar.detections import scene_timestamp
+    from iceberg_sar.pointval import scene_footprint
+    from iceberg_sar.sentinel2 import OpticalParams, extract_for_area
+
+    cfg = load_config(config)
+    name = Path(product_dir).name
+    v = cfg.section("validation")
+    targets, clear, log = extract_for_area(
+        scene_footprint(cfg.path("raw"), name).iloc[0], scene_timestamp(name)[:10],
+        cfg.root / v["s2_dir"], float(v["s2_max_cloud"]), OpticalParams())
+    for line in log:
+        typer.echo(line)
+    typer.echo(f"ok  {targets}")
+    typer.echo(f"ok  {clear}")
+
+
+@app.command("validate-points")
+def validate_points_cmd(
+    product_dir: Annotated[Path, typer.Argument(help="HyP3 RTC product directory (in data/raw).")],
+    truth: Annotated[str, typer.Option(help="iip-satellite, iip-aircraft or s2.")] = "s2",
+    band: Annotated[str, typer.Option(help="Which detections to validate.")] = "HV",
+    open_water: Annotated[bool, typer.Option(help="Only detections away from pack ice.")] = True,
+    config: ConfigOption = DEFAULT_CONFIG,
+) -> None:
+    """Match detections to truth points (drift-corrected); report precision and recall."""
+    import json
+
+    import geopandas as gpd
+    import pandas as pd
+
+    from iceberg_sar.detections import scene_timestamp
+    from iceberg_sar.pointval import load_truth, point_val_params, validate_points
+
+    cfg = load_config(config)
+    name = Path(product_dir).name
+    sar_time = pd.Timestamp(scene_timestamp(name)).tz_localize(None)
+    det = gpd.read_file(cfg.path("outputs") / "detections" / f"{name}_{band}_detections.geojson")
+    if open_water:
+        near_km = float(cfg.raw.get("viewer", {}).get("near_ice_km", 5))
+        det = det[~(det["distance_to_ice_km"] < near_km)]
+    pts, area = load_truth(cfg, name, sar_time, truth)
+    masked = cfg.path("interim") / name / f"{name}_{band}_masked.tif"
+    summary, t, d = validate_points(det, pts, masked, sar_time, point_val_params(cfg), area)
+    typer.echo(json.dumps(summary, indent=2))
+    size_col = "size" if "size" in t else None
+    if size_col is None and "area_m2" in t:
+        t["size"] = pd.cut(t["area_m2"], [0, 400, 1600, 6400, float("inf")],
+                           labels=["<400 m2", "400-1600 m2", "1600-6400 m2", ">6400 m2"])
+    c = t[t.compared]
+    if len(c):
+        typer.echo("recall by size class:")
+        typer.echo(c.groupby("size", observed=True)["matched"].agg(["sum", "count"]).to_string())
+    out = cfg.path("outputs") / "validation"
+    out.mkdir(parents=True, exist_ok=True)
+    stem = out / f"{name}_{band}_{truth}"
+    t.assign(time=t["time"].astype(str)).to_file(f"{stem}_truth.geojson", driver="GeoJSON")
+    d.to_file(f"{stem}_detections.geojson", driver="GeoJSON")
+    (out / f"{stem.name}_summary.json").write_text(json.dumps(summary, indent=2),
+                                                    encoding="utf-8")
+    typer.echo(f"ok  {stem}_*.geojson")
+
+
 if __name__ == "__main__":
     app()

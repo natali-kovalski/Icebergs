@@ -78,6 +78,18 @@ ground_truth:
   nais_url: https://www.navcen.uscg.gov/sites/default/files/images/iip/data/{year}/{ymd}_NAIS65.gif
   min_valid_fraction: 0.2   # compare only squares the scene covers at least this much
 
+validation:
+  # Point-level validation against IIP sightings (NSIDC G00807, seasons up to 2021) and
+  # Sentinel-2 optical targets. See `validate-points`.
+  iip_dir: data/ground_truth/iip_sightings
+  s2_dir: data/ground_truth/s2
+  max_dist_m: 500           # match tolerance after drift correction (IIP positions are ~100 m)
+  offset_search_m: 15000    # drift search half-width (0.5 m/s for 8 h = 14 km)
+  offset_step_m: 250
+  aircraft_window_h: 8      # aircraft / ship sightings up to this long after the SAR pass
+  satellite_window_min: 30  # Sentinel-1 sightings within this of the SAR pass (same pass)
+  s2_max_cloud: 90          # skip Sentinel-2 tiles cloudier than this
+
 viewer:
   # CZML styling. Nothing is dropped: near-ice candidates are greyed out and can be hidden.
   near_ice_km: 5            # closer than this to pack ice = likely floe (88% of 2025-05-02 detections)
