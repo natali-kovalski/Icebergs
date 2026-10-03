@@ -25,6 +25,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ml = [
+    "torch>=2.2",
+    "scikit-learn>=1.4",
+    "py7zr>=0.20",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",

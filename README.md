@@ -79,6 +79,46 @@ npm run dev                           # http://localhost:5173
 - The basemap is Esri World Imagery, so no Cesium ion token is needed. You can set `VITE_CESIUM_ION_TOKEN` in `viewer/.env` to enable ion services.
 - `npm run build` writes a static site to `viewer/dist/` that any static host can serve.
 
+## Experimental: iceberg vs. ship classifier
+
+A small CNN trained on the Kaggle [Statoil/C-CORE Iceberg Classifier Challenge](https://www.kaggle.com/c/statoil-iceberg-classifier-challenge) chips (1,604 labelled 75×75 HH/HV chips in dB). It adds `iceberg_prob` to each detection. **Treat it as a weak hint, not a label** (see below).
+
+```powershell
+pip install -e .[ml]                           # torch, scikit-learn, py7zr
+# put train.json from Kaggle in data/kaggle/ (Kaggle terms: don't redistribute)
+python -m iceberg_sar.cli train-classifier     # 5-fold CV for each variant, ~1 min each on a GPU
+python -m iceberg_sar.cli classify data\raw\<product_dir>
+```
+
+Output: `<scene>_HV_classified.geojson` (detections + `iceberg_prob`, `iceberg_prob_hhhv`, `iceberg_prob_hh`, chip diagnostics) and `<scene>_HV_classified_chips.png` (most iceberg-like / ship-like / uncertain chips).
+
+**Matching our chips to Kaggle.** We measured both datasets instead of assuming:
+
+- *Resolution matches.* Kaggle chips have the same speckle correlation (lag-1 ≈ 0.6) and ENL (≈ 4) as our 10 m RTC, and 1,470 of 1,471 incidence angles fall in the IW swath (29–46°). So chips are cut at native 10 m, without resampling.
+- *Radiometry doesn't match, so we correct it.* HyP3 gives gamma0, Kaggle is sigma0, so we multiply by cos(incidence). HyP3 also removes the HV thermal noise floor (calm sea HV ≈ −40 dB), while Kaggle keeps it (−24 to −29 dB, depending on incidence). We add speckled noise until each chip's HV background matches the Kaggle level at that incidence. After this, open-water chips match Kaggle in background level, ENL and speckle correlation, in both bands.
+- Kaggle's missing incidence angles are all ships. They are imputed to the mean so the model can't learn that leak.
+
+**Results.** Two variants: `hhhv` (both bands, fills `iceberg_prob`) and `hh` (HH only, a control without the noise-floor assumption).
+
+| | Kaggle 5-fold out-of-fold log loss | Accuracy |
+|---|---|---|
+| hhhv | 0.229 | 0.90 |
+| hh | 0.266 | 0.89 |
+| always predict the class prior | 0.691 | 0.53 |
+
+On Kaggle, the probabilities are well calibrated: of chips scored 0.8–1.0, 96% are icebergs, and of chips scored 0–0.2, 3% are.
+
+**How much to trust it on our scenes.** There is no ship ground truth (no AIS) for our dates, so these are consistency checks, not accuracy:
+
+- *The model is unsure on our data.* On Kaggle, 79% of chips get p < 0.2 or > 0.8. On our 343 open-water detections, only 26% do.
+- *The two variants agree on 70% of open-water detections.* Only 32 detections are confidently classified by both, 14 as icebergs and 18 as ships.
+- *Size gap:* most of our targets are 2–10 px, while Kaggle targets have a median of ~74 px above background. Small targets are out of distribution.
+- *Shifting the HV noise floor by ±2 dB* changes p by 0.07 on average and flips 9–13% of labels.
+- *Near pack ice* (within 5 km), chips contain ice texture that Kaggle never shows. p is high there (0.79), but that says nothing useful.
+- Visually the ranking makes sense: irregular blobs bright in both bands score high, and sharp point targets with azimuth streaks score low.
+
+Use `iceberg_prob` as a sort key for review, or trust it only where both variants agree with high confidence. Validating it properly needs AIS ship positions for the same passes.
+
 ## Layout
 
 - `config.yaml`: all pipeline parameters.

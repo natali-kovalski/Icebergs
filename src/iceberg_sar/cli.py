@@ -217,6 +217,53 @@ def czml(
 
 
 
+@app.command("train-classifier")
+def train_classifier(
+    config: ConfigOption = DEFAULT_CONFIG,
+    variant: Annotated[str | None, typer.Option(help="Train only this variant, e.g. hh.")] = None,
+) -> None:
+    """Train the iceberg/ship CNN on the Kaggle chips (stratified k-fold CV)."""
+    from iceberg_sar.classify.dataset import load_kaggle
+    from iceberg_sar.classify.train import TrainParams, train_cv
+
+    cfg = load_config(config)
+    c = cfg.section("classifier")
+    data = load_kaggle(cfg.path("kaggle"))
+    names = [variant] if variant else list(c["variants"])
+    for name in names:
+        params = TrainParams(
+            bands=tuple(c["variants"][name]), use_inc=bool(c["use_incidence_angle"]),
+            folds=int(c["folds"]), epochs=int(c["epochs"]), batch_size=int(c["batch_size"]),
+            learning_rate=float(c["learning_rate"]), weight_decay=float(c["weight_decay"]),
+            width=int(c["width"]), dropout=float(c["dropout"]), seed=int(c["seed"]),
+        )
+        out = cfg.path("models") / "classifier" / name
+        m = train_cv(data, params, out)
+        typer.echo(f"{name:<6} bands={'+'.join(params.bands)}  OOF log loss={m['oof_log_loss']}  "
+                   f"accuracy={m['oof_accuracy']}  (prior log loss {m['prior_log_loss']}, "
+                   f"{m['train_seconds']} s)")
+        typer.echo(f"ok  {out}")
+
+
+@app.command()
+def classify(
+    product_dir: Annotated[Path, typer.Argument(help="HyP3 RTC product directory (in data/raw).")],
+    config: ConfigOption = DEFAULT_CONFIG,
+    band: Annotated[str, typer.Option(help="Which detections to classify.")] = "HV",
+) -> None:
+    """Add iceberg_prob to a scene's detections (experimental; see README on trusting it)."""
+    import json
+
+    from iceberg_sar.classify.apply import classify_product
+
+    cfg = load_config(config)
+    outputs = classify_product(product_dir, cfg, band)
+    summary = json.loads(outputs["summary"].read_text(encoding="utf-8"))
+    typer.echo(json.dumps(summary, indent=2))
+    for kind, path in outputs.items():
+        typer.echo(f"{kind:<12} {path}")
+
+
 @app.command("iip-sightings")
 def iip_sightings(
     seasons: Annotated[list[int], typer.Argument(help="Seasons, e.g. 2019 (Oct 2018-Sep 2019).")],
