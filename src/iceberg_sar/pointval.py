@@ -29,6 +29,7 @@ class PointValParams:
     offset_search_m: float = 15_000.0  # drift search half-width when sources are not simultaneous
     offset_step_m: float = 250.0
     simultaneous_s: float = 1800.0  # closer in time than this: no drift correction
+    min_offset_matches: int = 5  # a drift peak needs this many matches and 3x the chance level
     valid_block_px: int = 10  # truth must sit in a fully valid block of this many SAR pixels
 
 
@@ -75,7 +76,10 @@ def validate_points(
         off = estimate_offset(det_xy, truth_xy, p.offset_search_m, p.offset_step_m, p.max_dist_m)
     else:
         off = OffsetResult(0.0, 0.0, 0, 0.0)
-    shift = np.array([off.dx_m, off.dy_m])
+    # A weak peak is a chance alignment: applying it would score against random positions.
+    reliable = gap_s <= p.simultaneous_s or (
+        off.n_matched >= max(p.min_offset_matches, 3 * off.chance_n_matched))
+    shift = np.array([off.dx_m, off.dy_m]) if reliable else np.zeros(2)
 
     truth_ok = sar_valid_at(masked_tif, truth_xy - shift, p.valid_block_px)
     det_ok = np.ones(len(det_xy), dtype=bool)
@@ -96,6 +100,8 @@ def validate_points(
     summary = {
         "time_gap_h": round(gap_s / 3600, 2),
         "offset": asdict(off),
+        "offset_applied": bool(reliable and shift.any()),
+        "drift_unresolved": not reliable,
         "truth_total": len(truth),
         "truth_compared": m.n_truth,
         "detections_total": len(detections),

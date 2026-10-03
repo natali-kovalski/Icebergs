@@ -8,7 +8,9 @@ A target is a bright compact object in NIR (B08) whose surrounding ring is open 
 - icebergs are bright in NIR (snow/ice ~0.3-0.7 reflectance), open water is ~0-0.05;
 - pack ice is bright everywhere, so objects inside it fail the ring test and are skipped;
 - large cloud areas (SCL cloud classes) are removed with a buffer; small isolated objects
-  that SCL calls cloud are kept, because SCL often labels icebergs as cloud.
+  that SCL calls cloud are kept, because SCL often labels icebergs as cloud;
+- small clouds (cumulus) are bright in NIR too, but also in shortwave infrared (B11),
+  where ice and snow are dark, so targets must have low mean SWIR.
 Optical imagery cannot tell a berg from an isolated ice floe either, so the truth class is
 "isolated ice target in open water", the same thing the SAR detector looks for.
 """
@@ -25,6 +27,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from rasterio.enums import Resampling
+from rasterio.windows import Window, from_bounds
 from scipy import ndimage
 from shapely.geometry import mapping
 from shapely.geometry.base import BaseGeometry
@@ -44,6 +47,7 @@ class OpticalParams:
     min_ring_water: float = 0.9  # fraction of the ring that is open water
     cloud_min_area_m2: float = 1_000_000.0  # SCL cloud patches smaller than this are ignored
     cloud_buffer_m: float = 500.0
+    max_swir: float = 0.1  # mean B11 over the object; ice / snow ~0.0-0.1, cloud ~0.2-0.5
 
 
 def search_items(area: BaseGeometry, day: str, max_cloud: float = 100.0) -> list[dict]:
@@ -80,35 +84,51 @@ def cloud_mask(scl: np.ndarray, pixel_m: float, p: OpticalParams) -> np.ndarray:
     return ndimage.binary_dilation(mask, structure=_disk(r))
 
 
+def _no_targets() -> pd.DataFrame:
+    """Empty result with numeric dtypes, so concatenating tiles keeps numbers numeric."""
+    return pd.DataFrame({c: pd.Series(dtype=float)
+                         for c in ("row", "col", "area_m2", "peak_reflectance")})
+
+
 def bright_targets(
-    nir: np.ndarray, excluded: np.ndarray, pixel_m: float, p: OpticalParams
+    nir: np.ndarray,
+    excluded: np.ndarray,
+    pixel_m: float,
+    p: OpticalParams,
+    swir: np.ndarray | None = None,
 ) -> pd.DataFrame:
-    """Isolated bright objects in a NIR reflectance array. `excluded` = cloud / nodata."""
+    """Isolated bright objects in a NIR reflectance array. `excluded` = cloud / nodata.
+
+    `swir` (B11 on the same grid) rejects clouds: kept objects need mean SWIR <= max_swir.
+    """
     valid = np.isfinite(nir) & ~excluded
     target = valid & (nir > p.target_reflectance)
     water = valid & (nir < p.water_reflectance)
     labels, n = ndimage.label(target, structure=np.ones((3, 3), bool))
     if n == 0:
-        return pd.DataFrame(columns=["row", "col", "area_m2", "peak_reflectance"])
+        return _no_targets()
     idx = np.arange(1, n + 1)
     area_px = ndimage.sum_labels(target, labels, idx)
     keep = (area_px >= p.min_area_px) & (area_px * pixel_m**2 <= p.max_area_m2)
-    # Ring test on each object's bounding box: dilate the object, look at the new pixels.
+    # Ring test, vectorised (pack ice yields ~1e5 fragments per tile): open-water fraction of
+    # the object's bounding box grown by `ring_m`, not counting the object's own pixels.
     r = max(1, round(p.ring_m / pixel_m))
-    ring_ok = np.zeros(n, dtype=bool)
-    for i, sl in enumerate(ndimage.find_objects(labels)):
-        if not keep[i] or sl is None:
-            continue
-        r0, r1, c0, c1 = sl[0].start - r, sl[0].stop + r, sl[1].start - r, sl[1].stop + r
-        if r0 < 0 or c0 < 0 or r1 > nir.shape[0] or c1 > nir.shape[1]:
-            continue  # ring cut off by the tile edge: can't tell if it is isolated
-        obj = labels[r0:r1, c0:c1] == i + 1
-        ring = ndimage.binary_dilation(obj, structure=_disk(r)) & ~obj
-        ring_ok[i] = ring.any() and water[r0:r1, c0:c1][ring].mean() >= p.min_ring_water
-    keep &= ring_ok
+    boxes = np.array([(s[0].start, s[0].stop, s[1].start, s[1].stop)
+                      for s in ndimage.find_objects(labels)]) + [-r, r, -r, r]
+    h, w = nir.shape
+    inside = (boxes[:, 0] >= 0) & (boxes[:, 2] >= 0) & (boxes[:, 1] <= h) & (boxes[:, 3] <= w)
+    b = np.clip(boxes, 0, [h, h, w, w])  # ring cut off by the tile edge fails `inside` anyway
+    sat = np.zeros((h + 1, w + 1), dtype=np.int32)  # summed-area table; <= 1.2e8 per tile
+    sat[1:, 1:] = water.cumsum(0, dtype=np.int32).cumsum(1, dtype=np.int32)
+    r0, r1, c0, c1 = b.T
+    n_water = sat[r1, c1] - sat[r0, c1] - sat[r1, c0] + sat[r0, c0]
+    n_ring = (b[:, 1] - b[:, 0]) * (b[:, 3] - b[:, 2]) - area_px
+    keep &= inside & (n_water >= p.min_ring_water * n_ring)
+    if swir is not None:
+        keep &= ndimage.mean(np.nan_to_num(swir, nan=1.0), labels, idx) <= p.max_swir
     k = idx[keep]
     if len(k) == 0:
-        return pd.DataFrame(columns=["row", "col", "area_m2", "peak_reflectance"])
+        return _no_targets()
     com = np.array(ndimage.center_of_mass(target, labels, k)).reshape(-1, 2)
     return pd.DataFrame({
         "row": com[:, 0],
@@ -125,16 +145,26 @@ def _reflectance(asset: dict, raw: np.ndarray) -> np.ndarray:
     return out
 
 
-def item_targets(item: dict, p: OpticalParams) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    """Targets (points) and comparable area (clear, valid; polygons) for one tile, EPSG:4326."""
-    nir_asset, scl_asset = item["assets"]["nir"], item["assets"]["scl"]
-    with rasterio.open(nir_asset["href"]) as src:
-        nir = _reflectance(nir_asset, src.read(1))
-        transform, crs, pixel_m = src.transform, src.crs, abs(src.transform.a)
-        with rasterio.open(scl_asset["href"]) as scl_src:
-            scl = scl_src.read(1, out_shape=nir.shape, resampling=Resampling.nearest)
+def item_targets(
+    item: dict, p: OpticalParams, area: BaseGeometry | None = None
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    """Targets (points) and comparable area (clear, valid; polygons) for one tile, EPSG:4326.
+
+    `area` (EPSG:4326) limits reading to the part of the tile it overlaps.
+    """
+    assets = item["assets"]
+    with rasterio.open(assets["nir"]["href"]) as src:
+        window = _window(src, area)
+        nir = _reflectance(assets["nir"], src.read(1, window=window))
+        transform, crs, pixel_m = src.window_transform(window), src.crs, abs(src.transform.a)
+    if nir.size == 0:
+        return (gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"),
+                gpd.GeoDataFrame(geometry=[], crs="EPSG:4326"))
+    scl = _read_on_grid(assets["scl"]["href"], window, nir.shape, Resampling.nearest)
+    swir = _reflectance(assets["swir16"], _read_on_grid(assets["swir16"]["href"], window,
+                                                         nir.shape, Resampling.bilinear))
     excluded = cloud_mask(scl, pixel_m, p) | ~np.isfinite(nir)
-    t = bright_targets(nir, excluded, pixel_m, p)
+    t = bright_targets(nir, excluded, pixel_m, p, swir)
     xs, ys = rasterio.transform.xy(transform, t["row"].to_numpy(), t["col"].to_numpy())
     pts = gpd.GeoDataFrame(
         t.assign(item=item["id"],
@@ -143,6 +173,27 @@ def item_targets(item: dict, p: OpticalParams) -> tuple[gpd.GeoDataFrame, gpd.Ge
     ).to_crs("EPSG:4326")
     clear = _clear_area(~excluded, transform, crs)
     return pts, clear
+
+
+def _window(src: rasterio.DatasetReader, area: BaseGeometry | None) -> Window:
+    full = Window(0, 0, src.width, src.height)
+    if area is None:
+        return full
+    bounds = gpd.GeoSeries([area], crs="EPSG:4326").to_crs(src.crs).total_bounds
+    w = from_bounds(*bounds, transform=src.transform).round_offsets().round_lengths()
+    try:
+        return w.intersection(full)
+    except rasterio.errors.WindowError:  # no overlap
+        return Window(0, 0, 0, 0)
+
+
+def _read_on_grid(href: str, window: Window, shape: tuple[int, int],
+                  resampling: Resampling) -> np.ndarray:
+    """Read a coarser band (20 m) for the 10 m `window`, resampled onto its grid."""
+    with rasterio.open(href) as src:
+        f = 10.0 / abs(src.transform.a)  # 10 m pixels per source pixel
+        w = Window(window.col_off * f, window.row_off * f, window.width * f, window.height * f)
+        return src.read(1, window=w, out_shape=shape, resampling=resampling)
 
 
 def _clear_area(clear: np.ndarray, transform: rasterio.Affine, crs: object,
@@ -183,7 +234,7 @@ def extract_for_area(
         raise FileNotFoundError(f"No Sentinel-2 tiles over the area on {day}")
     pts, clear, log = [], [], []
     for it in items:
-        t, c = item_targets(it, p)
+        t, c = item_targets(it, p, area)
         pts.append(t)
         clear.append(c)
         log.append(f"{it['id']}  cloud={it['properties']['eo:cloud_cover']:.0f}%  targets={len(t)}")

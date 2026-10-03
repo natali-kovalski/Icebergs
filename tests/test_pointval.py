@@ -50,3 +50,11 @@ def test_drift_corrected_precision_and_recall(tmp_path: Path) -> None:
     assert s["recall"] == 0.75
     assert s["precision"] == round(30 / 31, 3)
     assert t.matched.sum() == 30 and d.matched.sum() == 30
+
+
+def test_weak_drift_peak_is_not_applied(tmp_path: Path) -> None:
+    det = _points(np.array([[X0 + 3000.0, Y1 - 3000], [X0 + 9000, Y1 - 12_000]]), SAR_TIME)
+    truth = _points(np.array([[X0 + 7000.0, Y1 - 8000]]), SAR_TIME + pd.Timedelta("6h"))
+    s, _, _ = validate_points(det, truth, _scene(tmp_path), SAR_TIME, PointValParams())
+    assert s["drift_unresolved"] and not s["offset_applied"]
+    assert s["matched"] == 0

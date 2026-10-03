@@ -32,3 +32,14 @@ def test_cloud_mask_ignores_small_cloud_blobs() -> None:
     assert not m[10:12, 10:12].any()
     assert m[150:, 150:].all()
     assert m[110, 200]                                    # buffered by 500 m
+
+
+def test_swir_rejects_small_clouds() -> None:
+    nir = np.full((100, 100), 0.02, dtype=np.float32)
+    swir = np.full_like(nir, 0.01)
+    nir[20:23, 20:23] = 0.5                              # berg: dark in SWIR
+    swir[20:23, 20:23] = 0.05
+    nir[70:73, 70:73] = 0.5                              # small cumulus: bright in SWIR
+    swir[70:73, 70:73] = 0.35
+    t = bright_targets(nir, np.zeros_like(nir, bool), 10.0, P, swir)
+    assert [(round(r), round(c)) for r, c in zip(t.row, t.col, strict=True)] == [(21, 21)]
