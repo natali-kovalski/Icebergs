@@ -87,6 +87,33 @@ def test_copol_check_drops_cross_pol_only_target(scene: dict[str, Path]) -> None
     assert found(6.0) == {ON_BLOCK_EDGE}
 
 
+@pytest.mark.parametrize("merge", [False, True])
+def test_split_target_merged_by_structure(scene: dict[str, Path], merge: bool) -> None:
+    # One ship-like target: two CFAR cores 5 px apart in azimuth, joined by a dimmer
+    # bridge (+6 dB, below the +7.3 dB CFAR threshold but above grow_db after smoothing).
+    split = (200, 100)
+    with rasterio.open(scene["HV"]) as src:
+        hv = src.read(1)
+    r, c = split
+    hv[r : r + 2, c : c + 2] = 0.1
+    hv[r + 5 : r + 7, c : c + 2] = 0.1
+    hv[r + 2 : r + 5, c : c + 2] = 0.004
+    scene = {"HV": _write(scene["HV"].with_name("hv_split.tif"), hv),
+             "HH": _write(scene["HH"].with_name("hh_split.tif"), hv * 10)}
+    cfar = CfarParams(guard_px=3, background_px=10, pfa=1e-6, enl=4.0)
+    p = DetectionParams(min_area_px=2, max_area_px=500, edge_buffer_px=10, max_extent_px=20,
+                        max_structure_px=15, merge_by_structure=merge)
+    table, _, _ = detect_raster(scene, "HV", cfar, p)
+    at_split = table[(table.row - r).between(-1, 8) & (table.col - c).between(-1, 3)]
+    if merge:
+        assert len(at_split) == 1
+        assert at_split.area_px.item() == 8
+        assert at_split.row.item() == pytest.approx(r + 3.0, abs=0.01)  # mean of rows r..r+1, r+5..r+6
+    else:
+        assert len(at_split) == 2
+    assert len(table) == len(at_split) + 2   # COMPACT and ON_BLOCK_EDGE unchanged
+
+
 def test_geodataframe_attributes(scene: dict[str, Path]) -> None:
     table, transform, crs = _run(scene, 1024)
     gdf = to_geodataframe(table, transform, crs, NAME, inc_path=None)

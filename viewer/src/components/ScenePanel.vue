@@ -1,9 +1,18 @@
 <script setup lang="ts">
 import type { Layers, Legend, SceneInfo } from "../scene";
 
-defineProps<{ scenes: SceneInfo[]; legend: Legend; currentId?: string }>();
+import { computed } from "vue";
+
+const props = defineProps<{ scenes: SceneInfo[]; legend: Legend; currentId?: string }>();
 const layers = defineModel<Layers>("layers", { required: true });
 const emit = defineEmits<{ jump: [scene: SceneInfo] }>();
+
+// Ice controls only mean something when the scene on screen has pack ice mapped.
+const hasIce = (s: SceneInfo) => s.iceAreaKm2 > 0;
+const currentHasIce = computed(() => {
+  const s = props.scenes.find((x) => x.id === props.currentId);
+  return s ? hasIce(s) : props.scenes.some(hasIce);
+});
 </script>
 
 <template>
@@ -25,15 +34,23 @@ const emit = defineEmits<{ jump: [scene: SceneInfo] }>();
         </div>
         <div class="stats">
           <span><b>{{ s.nOpenWater }}</b> open water</span>
-          <span class="muted">{{ s.nNearIce }} near ice</span>
-          <span class="muted">{{ s.iceAreaKm2.toLocaleString() }} km² pack ice</span>
+          <template v-if="hasIce(s)">
+            <span class="muted">{{ s.nNearIce }} near ice</span>
+            <span class="muted">{{ s.iceAreaKm2.toLocaleString() }} km² pack ice</span>
+          </template>
+          <span v-else class="muted">no pack ice</span>
         </div>
       </li>
     </ul>
 
     <h2>Layers</h2>
-    <label><input v-model="layers.nearIce" type="checkbox" /> Near-ice candidates (likely floes)</label>
-    <label><input v-model="layers.seaIce" type="checkbox" /> Pack-ice mask</label>
+    <label :class="{ off: !currentHasIce }">
+      <input v-model="layers.nearIce" type="checkbox" :disabled="!currentHasIce" /> Near-ice candidates (likely floes)
+    </label>
+    <label :class="{ off: !currentHasIce }">
+      <input v-model="layers.seaIce" type="checkbox" :disabled="!currentHasIce" /> Pack-ice mask
+      <span v-if="!currentHasIce" class="muted">(none in this scene)</span>
+    </label>
     <label><input v-model="layers.footprints" type="checkbox" /> Scene footprint</label>
 
     <h2>Legend</h2>
@@ -41,9 +58,9 @@ const emit = defineEmits<{ jump: [scene: SceneInfo] }>();
     <div class="ramp-labels">
       <span>≤{{ legend.contrastDbMin }} dB</span><span>contrast over sea</span><span>≥{{ legend.contrastDbMax }} dB</span>
     </div>
-    <div class="key"><span class="dot grey" /> within {{ legend.nearIceKm }} km of pack ice</div>
+    <div class="key" :class="{ off: !currentHasIce }"><span class="dot grey" /> within {{ legend.nearIceKm }} km of pack ice</div>
     <div class="key"><span class="dot small" /><span class="dot big" /> size = grown target extent</div>
-    <div class="key"><span class="swatch ice" /> pack-ice mask</div>
+    <div class="key" :class="{ off: !currentHasIce }"><span class="swatch ice" /> pack-ice mask</div>
     <div class="key"><span class="swatch footprint" /> scene footprint</div>
     <p class="note">Click a point for its attributes. Candidates are not verified icebergs; ships also
       appear as bright targets.</p>
@@ -83,6 +100,8 @@ h2 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spac
 .sat, .muted { color: #8fa3bb; }
 .stats { display: flex; flex-direction: column; margin-top: 2px; }
 label { display: block; margin: 4px 0; cursor: pointer; }
+.off { opacity: 0.45; }
+label.off { cursor: default; }
 .ramp {
   height: 10px;
   border-radius: 2px;

@@ -4,7 +4,7 @@ Detecting icebergs off Newfoundland & Labrador in Sentinel-1 radar imagery, and 
 
 ![Cesium viewer: spring 2025 detections off NE Newfoundland](docs/img/viewer.png)
 
-**In short:** a CFAR detector on Sentinel-1 cross-pol (HV) imagery finds **78% of the icebergs that International Ice Patrol analysts marked** on the same satellite pass (209 of 268, median position difference 128 m). It runs end to end with one command, from scene search to a time-dynamic CZML file for the viewer.
+**In short:** a CFAR detector on Sentinel-1 cross-pol (HV) imagery finds **78% of the icebergs that International Ice Patrol analysts marked** on the same satellite pass (208 of 268, median position difference 136 m). It runs end to end with one command, from scene search to a time-dynamic CZML file for the viewer.
 
 ## The problem
 
@@ -16,10 +16,10 @@ This project builds that pipeline on free Copernicus Sentinel-1 data, for the co
 
 | | |
 |---|---|
-| **Recall vs. same-pass IIP analyst labels** (2019-04-29) | **78%** (209 / 268), median offset 128 m |
+| **Recall vs. same-pass IIP analyst labels** (2019-04-29) | **78%** (208 / 268), median offset 136 m |
 | Recall by berg size | small (15–60 m) 62%, medium (61–120 m) 81%, large (> 120 m) 0 of 4 |
 | Recall by distance from the coast | stable, 73–84% from 0 to 100 km |
-| Precision | not measurable without AIS ship positions (lower bound 31%) |
+| Precision | not measurable without AIS ship positions (lower bound 39%) |
 | Runtime | about 17 min per 10 m scene on a laptop (masking + detection), after HyP3 processing |
 
 ![Detections vs. IIP labels, 2019-04-29](docs/img/validation_20190429.png)
@@ -98,7 +98,7 @@ npm run dev                        # http://localhost:5173
 `run` does the following:
 1. Searches ASF for HH+HV scenes over [aoi.geojson](aoi.geojson) and keeps the `run.max_scenes` (default 3) that cover the AOI best.
 2. Orders HyP3 RTC jobs, waits for them (often 30–60 min) and downloads them. Each 10 m scene costs 60 of the monthly HyP3 credits, and `--dry-run` shows the total first.
-3. Builds the land mask (one-time ~900 MB OSM download), preprocesses each scene, runs detection, and writes `viewer/public/data/iceberg_alley.czml`.
+3. Builds the land mask (one-time ~900 MB OSM download), preprocesses each scene, runs detection, and writes `viewer/public/data/iceberg_alley.czml`. The CZML holds every scene processed so far, not just this run's dates, so the viewer accumulates seasons.
 
 Re-runs reuse everything on disk: downloaded products, masked rasters and detections. Use `--force` to redo preprocessing and detection after changing parameters. Without `--start`/`--end`, the dates come from `search` in `config.yaml`.
 
@@ -145,7 +145,7 @@ The headline number uses IIP sightings marked on the same Sentinel-1 pass. That 
 
 ## Limitations
 
-- **Precision is unknown.** 475 of 684 detections on the validation pass have no IIP label. They are a mix of unrecorded bergs, fishing vessels and false alarms, in unknown proportions. Separating them needs AIS vessel positions.
+- **Precision is unknown.** 326 of 534 detections on the validation pass have no IIP label. They are a mix of unrecorded bergs, fishing vessels and false alarms, in unknown proportions. Separating them needs AIS vessel positions.
 - **Large bergs are missed** (0 of 4 over 120 m). The 300 m strip filter and a guard window smaller than the berg are the likely causes.
 - **Small bergs are harder** (62% recall), and single-pixel targets are removed by the 2 px minimum.
 - **Sea state matters.** On rougher days the HV background rises 3–4 dB and small bergs lose contrast.

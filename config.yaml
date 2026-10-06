@@ -16,7 +16,7 @@ paths:
 search:
   # Spring 2025: S1A + S1C give dense IW HH+HV coverage (HH/HV: co- and cross-pol, as used for CFAR and the sea-ice mask).
   start_date: "2026-06-01"
-  end_date: "2026-10-06"
+  end_date: "2026-09-29"
   platform: SENTINEL-1
   processing_levels: [GRD_HD, GRD_MD]   # IW comes as GRD_HD; EW comes as GRD_MD (medium res)
   beam_modes: [IW, EW]      # IW is usually VV/VH, EW is usually HH/HV. Check each scene.
@@ -79,6 +79,7 @@ detections:
   grow_db: 4                # region-grow level (dB over background, 3x3 smoothed) around each target
   max_structure_m: 300      # longer grown structures are sea-ice strips (tuned on 2025-05-08 at 20 m)
   copol_min_contrast_db: 6  # HH peak over HH background; drops HV-only speckle (10 m HV noise ~0 dB, bergs 3-20 dB). null = off
+  merge_by_structure: true  # CFAR cores in one grown blob = one target (ships split into 2 cores ~50 m apart)
   block_rows: 1024          # rows per processing block (memory vs. overhead)
 
 ground_truth:
@@ -101,7 +102,7 @@ validation:
 viewer:
   # CZML styling. Nothing is dropped: near-ice candidates are greyed out and can be hidden.
   near_ice_km: 5            # closer than this to pack ice = likely floe (88% of 2025-05-02 detections)
-  last_interval_days: 6     # how long the last scene stays on the timeline (S1A+S1C revisit)
+  last_interval_days: 7     # max days a scene stays on the timeline before the next pass (6 d revisit + slack)
   contrast_db_range: [10, 20]   # colour ramp for contrast over background (~p10-p90 at sea)
   colormap: plasma
   point_px_range: [6, 16]   # point size from structure_m (0 .. structure_m_max)

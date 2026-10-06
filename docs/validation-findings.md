@@ -1,8 +1,8 @@
 # Validation: how accurate is the detector?
 
 **Headline:** on a Sentinel-1 pass where International Ice Patrol (IIP) analysts marked every
-iceberg they identified, the detector found **78% of them (209 of 268)**, with a median
-position difference of **128 m**. Small bergs (15-60 m) are found 62% of the time, medium
+iceberg they identified, the detector found **78% of them (208 of 268)**, with a median
+position difference of **136 m**. Small bergs (15-60 m) are found 62% of the time, medium
 bergs (61-120 m) 81%.
 
 ![Detections vs. IIP labels, 2019-04-29](img/validation_20190429.png)
@@ -26,14 +26,16 @@ parameters.
 
 Scene: Sentinel-1A IW, 2019-04-29 09:41 UTC, HH/HV, HyP3 RTC 10 m. IIP lists 276 sightings
 from this pass (source `SNL1`, all high confidence); 268 fall on unmasked water and are compared.
-A detection matches a sighting within 500 m, one-to-one.
+A detection matches a sighting within 500 m, one-to-one. CFAR cores that belong to one bright
+blob are merged into a single target (`merge_by_structure`); before this, ships and some bergs
+split into two detections ~50 m apart, which inflated the count from 534 to 687 for one lost match.
 
 | | Value |
 |---|---|
-| Recall, all detections | **78%** (209 / 268) |
-| Recall, open-water detections only (> 5 km from pack ice) | 74% (199 / 268) |
-| Median match distance | 128 m |
-| Detections without an IIP label (in the labelled area) | 475 of 684 |
+| Recall, all detections | **78%** (208 / 268) |
+| Recall, open-water detections only (> 5 km from pack ice) | 74% (198 / 268) |
+| Median match distance | 136 m |
+| Detections without an IIP label (in the labelled area) | 326 of 534 |
 
 **Recall by distance from the coast is stable** (73-84% from 0 to 100 km), so the detector is
 not only working in easy offshore water.
@@ -43,11 +45,11 @@ the berg. Likely causes are the 300 m structure filter (tuned to reject sea-ice 
 CFAR guard window being smaller than a large berg, which puts part of the berg into its own
 background estimate. Not yet fixed.
 
-**Precision cannot be measured with this source.** 475 detections have no IIP label. They are
-strong targets (median contrast 16.9 dB vs. 18.2 dB for matched ones), similar in size, mostly
+**Precision cannot be measured with this source.** 326 detections have no IIP label. They are
+strong targets (median contrast 16.9 dB vs. 18.7 dB for matched ones), similar in size, mostly
 away from pack ice, and concentrated in the western part of the scene among labelled bergs.
 They are a mix of bergs IIP did not record, fishing vessels, and false alarms, in unknown
-proportions. **31% (209 / 684) is a lower bound on precision, not an estimate.** Separating
+proportions. **39% (208 / 534) is a lower bound on precision, not an estimate.** Separating
 them needs AIS vessel positions for the same pass.
 
 **This check is not independent.** IIP analysts looked at the same Sentinel-1 image. It tells us
@@ -74,7 +76,7 @@ on OSM land polygons (coastline error, or bergs grounded against the shore) and 
 the 500 m land buffer. Only 3 are on valid radar pixels, against 4 detections in the clear
 optical area. With a 5 h gap and so few points the drift cannot be estimated ("drift
 unresolved"), and none match. The radar scene itself is quiet: 9 detections over the whole
-frame (687 on the same frame on 2019-04-29), and IIP analysts marked only 2 bergs on this pass.
+frame (534 on the same frame on 2019-04-29), and IIP analysts marked only 2 bergs on this pass.
 One of those is on valid water and was missed. CFAR does fire on it (HV 17 dB over background,
 HH 22 dB), but it is a single 10 m pixel in HV and `min_area_px: 2` removes it. One case is not
 enough to change the filter, but it is the same small-berg weakness seen in the size table.
