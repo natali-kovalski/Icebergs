@@ -16,7 +16,7 @@ Iceberg ground truth off Newfoundland is scarce, and each source has a catch. We
 | NAIS daily iceberg chart | Estimated count per 1° square (~7,800 km²), 00 UTC | Order-of-magnitude check | Totals within 2-4x, but errors cancel (see below) |
 | IIP sightings, **same Sentinel-1 pass** | Berg positions marked by IIP analysts on the scene we process | Per-berg recall, no drift | **Headline result** |
 | IIP sightings, **aircraft** | Positions from reconnaissance flights | Independent recall | Inconclusive: 5-7 h later, drift unresolved |
-| Sentinel-2 optical | Bright objects in open water, 10 m | Independent precision and recall | Spring: loose sea ice dominates; June date pending |
+| Sentinel-2 optical | Bright objects in open water, 10 m | Independent precision and recall | Spring: loose sea ice dominates. June: targets almost all inshore, inside the land mask |
 
 The IIP sightings database (NSIDC G00807) ends with the 2021 season, so per-berg validation
 uses spring 2019 scenes rather than the 2025 scenes shown in the viewer. Same pipeline, same
@@ -66,8 +66,18 @@ include growlers too small for SAR. They can rule out gross errors, not measure 
 **Sentinel-2 on 2019-04-15.** The clear tiles were full of loose floes and brash ice: up to
 37,800 isolated bright objects per tile. At 10 m, optical imagery cannot tell a small berg from
 an ice floe, so this is not iceberg truth. June scenes (pack ice gone, bergs still present) avoid
-this: on 2020-06-10, 30 isolated targets were extracted and visually confirmed as bergs. The
-matching radar frame is still being processed.
+this: on 2020-06-10, 30 isolated targets were extracted and visually confirmed as bergs.
+
+**Sentinel-2 on 2020-06-10, against the matching radar frame.** Not usable for precision. The
+30 optical bergs sit in coves and among islands of inshore Bonavista and Notre Dame Bay: 18 fall
+on OSM land polygons (coastline error, or bergs grounded against the shore) and 8 more within
+the 500 m land buffer. Only 3 are on valid radar pixels, against 4 detections in the clear
+optical area. With a 5 h gap and so few points the drift cannot be estimated ("drift
+unresolved"), and none match. The radar scene itself is quiet: 9 detections over the whole
+frame (687 on the same frame on 2019-04-29), and IIP analysts marked only 2 bergs on this pass.
+One of those is on valid water and was missed. CFAR does fire on it (HV 17 dB over background,
+HH 22 dB), but it is a single 10 m pixel in HV and `min_area_px: 2` removes it. One case is not
+enough to change the filter, but it is the same small-berg weakness seen in the size table.
 
 **Aircraft sightings on 2019-04-15.** 25 sightings fall on valid radar pixels, 5.5-7.5 h after
 the pass, all stamped with the same time. Bergs drift a few km in that time, and with only 12
@@ -102,4 +112,5 @@ python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth iip-sat
 
 1. Fix large-berg recall (structure filter and guard window scaled to target size).
 2. AIS vessel positions for the same pass, to turn the precision lower bound into a number.
-3. Finish the 2020-06-10 Sentinel-2 comparison: the only independent precision estimate.
+3. Independent precision still needs a June Sentinel-2 date with bergs offshore of the land
+   buffer (2020-06-10 had them almost all inshore).

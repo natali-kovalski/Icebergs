@@ -136,6 +136,9 @@ def load_truth(
         day = sar_time.strftime("%Y-%m-%d")
         pts = gpd.read_file(d / f"{day}_s2_targets.geojson")
         pts["time"] = pd.to_datetime(pts["time"])
+        # Files written before _no_targets() existed can hold these as strings.
+        num = [c for c in ("row", "col", "area_m2", "peak_reflectance") if c in pts]
+        pts[num] = pts[num].apply(pd.to_numeric)
         return pts, gpd.read_file(d / f"{day}_s2_clear.geojson")
     if kind not in TRUTH_KINDS:
         raise ValueError(f"truth must be one of {TRUTH_KINDS}")
