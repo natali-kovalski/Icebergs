@@ -33,6 +33,8 @@ This is a portfolio project. It should show hands-on SAR and maritime-domain ski
 3. **Season**: April–June has the most icebergs. Start with 2–3 scenes from one spring.
 4. **Ground truth / validation**: Canadian Ice Service iceberg charts and the International Ice Patrol iceberg data for matching dates. These are for visual and approximate validation, not pixel-exact labels.
 5. **Land mask**: OSM land polygons or GSHHG coastline, buffered ~500 m to remove coastal clutter.
+6. **Point-level validation**: IIP Iceberg Sightings Database (NSIDC G00807, seasons up to 2021) and Sentinel-2 L2A optical targets (Earth Search COGs). Because IIP sightings end in 2021, per-berg validation uses spring 2019 scenes.
+7. **Experimental classifier data**: Kaggle Statoil/C-CORE Iceberg Classifier Challenge chips (`data/kaggle/train.json`, don't redistribute).
 
 ## Repository structure
 ```
@@ -44,19 +46,43 @@ iceberg-alley-sar/
 ├── data/                 # gitignored
 │   ├── raw/              # HyP3 downloads
 │   ├── interim/          # masked / calibrated rasters
-│   └── outputs/          # detections (GeoJSON), quicklooks, CZML
+│   ├── outputs/          # detections (GeoJSON), quicklooks, CZML, validation
+│   ├── land/             # OSM land polygons clipped to the AOI
+│   ├── ground_truth/     # NAIS chart GIFs, IIP sightings, Sentinel-2 targets
+│   ├── kaggle/           # Statoil/C-CORE train.json (experimental classifier)
+│   └── models/           # trained classifier weights
+├── docs/                 # findings write-ups and figures
+├── validation/           # hand-transcribed NAIS chart counts (CSV)
 ├── src/iceberg_sar/
+│   ├── config.py         # config.yaml loading, metre -> pixel conversion
 │   ├── search.py         # find scenes with asf_search
 │   ├── hyp3.py           # order + download RTC products
+│   ├── landmask.py       # OSM land polygons -> AOI land mask
+│   ├── seaice.py         # HV pack-ice mask, distance to ice
 │   ├── preprocess.py     # land mask, dB conversion, nodata handling
 │   ├── cfar.py           # CFAR detector
 │   ├── detections.py     # connected components -> GeoJSON with attributes
+│   ├── groundtruth.py    # NAIS chart download, per-square count comparison
+│   ├── iip.py            # IIP iceberg sightings (NSIDC G00807)
+│   ├── sentinel2.py      # Sentinel-2 optical targets
+│   ├── matching.py       # one-to-one matching, drift-offset estimation
+│   ├── pointval.py       # point-level precision / recall
 │   ├── export_czml.py    # detections -> CZML for Cesium
+│   ├── chips.py          # Kaggle-matched chips (experimental classifier)
+│   ├── classify/         # experimental iceberg vs. ship CNN
 │   └── cli.py            # typer CLI tying it together
-├── viewer/               # CesiumJS (optionally Vue) front end
+├── viewer/               # Vue 3 + Vite + CesiumJS front end
 ├── notebooks/            # exploration only; logic lives in src/
 └── tests/
 ```
+
+## Current status (as of 2026-10-05)
+- **Milestones 0–3: done.** Search, HyP3 RTC (10 m), land + pack-ice masks, CA-CFAR on HV with strip rejection and an HH co-pol check, GeoJSON detections, and the Vue + Cesium viewer.
+- **Scenes:** spring 2025 (2025-05-02, 05-08, 05-14) in the viewer, checked against NAIS charts. Spring 2019 (2019-04-15, 04-29) and 2020-06-10 for point-level validation.
+- **Validation (beyond the plan):** 78% recall (209/268) against same-pass IIP analyst labels on 2019-04-29, median offset 128 m. Precision is not measurable without AIS. Large bergs (>120 m) are missed. See `docs/validation-findings.md`.
+- **Experimental:** iceberg vs. ship CNN trained on Kaggle chips (`iceberg_prob`). Use it as a review hint only; see the README.
+- **Milestone 4: not started.** README write-up, screenshots, and an end-to-end `run` command (there is no `cli.py run` yet).
+- **Stretch not done:** OS-CFAR / K-distribution (`cfar.variant` has a slot for it).
 
 ## Milestones
 
@@ -95,8 +121,14 @@ iceberg-alley-sar/
 - Near-range vs. far-range incidence angle changes backscatter. Keep incidence angle as an attribute of each detection.
 - Sea ice (pack ice) looks very different from icebergs in open water. Early in the season, pack ice can cover parts of the AOI. Mask or exclude it rather than detecting it as icebergs.
 - Keep dB vs. linear consistent: CFAR on linear intensity, dB for display and reported attributes.
+- 10 m IW GRD is oversampled (~20 m true resolution). HV speckle grains span ~2×2 px and pass a 2 px minimum, so the HH co-pol check is needed.
+- HyP3 removes the HV thermal noise floor, so open-water HV sits near −30 to −40 dB with ENL < 1. Estimate ENL from the scene instead of assuming it.
+- Keep size parameters in metres in `config.yaml`. They are converted to pixels per scene, so tuning carries over between 20 m and 10 m.
+
+## Decisions made
+- First dates: spring 2025 (2025-05-02, 05-08, 05-14). Spring 2019 for IIP point validation, since that database ends in 2021.
+- Viewer: Vue 3 + Vite + CesiumJS, Esri imagery basemap (no ion token needed).
 
 ## Open questions (decide with me as we go)
-- Which spring and which specific dates to use first.
-- Whether to build the viewer as plain CesiumJS or a Vue app.
-- Whether to add FastAPI + PostGIS for storing detections across many scenes, or keep flat files.
+- Whether to add FastAPI + PostGIS for storing detections across many scenes, or keep flat files (flat files so far).
+- Whether to keep the experimental classifier in the portfolio write-up, given that it can't be validated without AIS.

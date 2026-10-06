@@ -4,6 +4,18 @@ Detect icebergs off the coast of Newfoundland & Labrador in Sentinel-1 SAR image
 
 > Work in progress. The full write-up comes in Milestone 4.
 
+## Status
+
+| Milestone | State |
+|---|---|
+| 0. Setup | Done |
+| 1. First masked scene (search, HyP3 RTC, land + pack-ice mask, quicklook) | Done |
+| 2. CA-CFAR detection + NAIS chart check | Done (OS-CFAR / K-distribution stretch not done) |
+| 3. Vue + CesiumJS viewer | Done |
+| Point-level validation (IIP sightings, Sentinel-2) | Done: **78% recall** against same-pass IIP labels, see [docs/validation-findings.md](docs/validation-findings.md) |
+| Experimental iceberg vs. ship CNN | Works, but treat it as a weak hint (see below) |
+| 4. Portfolio polish (write-up, screenshots, end-to-end `run` command) | Not started |
+
 ## Setup
 
 Requires Python 3.11+.
@@ -53,7 +65,7 @@ Outputs in `data/outputs/detections/`:
 - `<product>_<BAND>_detections.png`: dB quicklook with detections circled.
 - `<product>_<BAND>_detections.json`: run summary (ENL, threshold, count).
 
-Validation against the North American Ice Service (IIP + Canadian Ice Service) iceberg chart:
+Count check against the North American Ice Service (IIP + Canadian Ice Service) iceberg chart:
 
 ```powershell
 python -m iceberg_sar.cli ground-truth 2025-05-08     # downloads daily chart GIFs to data/ground_truth/
@@ -61,6 +73,23 @@ python -m iceberg_sar.cli validate data\raw\<product_dir> --counts validation\na
 ```
 
 The chart gives icebergs per 1-degree square, and it is only published as an image. For each new date, transcribe the squares covering the scene into a CSV like `validation/nais_20250508_counts.csv`. Findings: [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
+
+## Point-level validation
+
+The NAIS chart only gives counts per 1° square. For per-berg recall, detections are matched one-to-one (within 500 m, drift-corrected when the truth is not simultaneous) against:
+
+- **IIP Iceberg Sightings Database** (NSIDC G00807, seasons up to 2021). Sightings that IIP analysts marked on the same Sentinel-1 pass have no drift, so they give the cleanest recall. Aircraft sightings are hours later.
+- **Sentinel-2 L2A optical targets** (Earth Search COGs): isolated bright objects in open water on the same date.
+
+```powershell
+python -m iceberg_sar.cli iip-sightings 2019                                            # download a season
+python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth iip-satellite --no-open-water
+python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth iip-aircraft
+python -m iceberg_sar.cli s2-targets data\raw\<product_dir>                             # optical targets for the scene date
+python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth s2
+```
+
+**Result (2019-04-29, 10 m RTC):** the detector finds **209 of 268** IIP-labelled bergs (78%), median offset 128 m. Recall is 62% for small bergs (15–60 m), 81% for medium bergs (61–120 m), and 0 of 4 for bergs over 120 m. Precision can't be measured without AIS vessel positions. Aircraft sightings and Sentinel-2 were inconclusive (drift, loose sea ice, bergs inshore). Full write-up: [docs/validation-findings.md](docs/validation-findings.md). Outputs go to `data/outputs/validation/`.
 
 ## Milestone 3: Cesium viewer
 
@@ -123,11 +152,18 @@ Use `iceberg_prob` as a sort key for review, or trust it only where both variant
 
 - `config.yaml`: all pipeline parameters.
 - `aoi.geojson`: area of interest (EPSG:4326).
-- `src/iceberg_sar/`: pipeline code.
-- `data/`: raw, interim, and output data. It is gitignored.
+- `src/iceberg_sar/`: pipeline code (`classify/` is the experimental CNN).
+- `data/`: raw, interim, output, ground-truth and model data. It is gitignored.
+- `docs/`: findings write-ups ([CFAR](docs/milestone2-cfar-findings.md), [validation](docs/validation-findings.md)) and figures.
+- `validation/`: hand-transcribed NAIS chart counts for 2025-05-02, 05-08 and 05-14.
 - `viewer/`: Vue + CesiumJS front end (`src/scene.ts` holds the Cesium logic).
+- `tests/`: pytest suite (`pytest`).
 - `notebooks/`: exploration only.
 
 ## Data terms
 
-Sentinel-1 data is from Copernicus via ASF.
+- Sentinel-1 data is from Copernicus via ASF. Sentinel-2 L2A is from Copernicus via Earth Search (Element 84).
+- Iceberg charts: North American Ice Service (International Ice Patrol + Canadian Ice Service).
+- Iceberg sightings: International Ice Patrol Iceberg Sightings Database, NSIDC G00807.
+- Land polygons: (c) OpenStreetMap contributors, ODbL.
+- Kaggle Statoil/C-CORE chips: used under the competition terms and not redistributed.

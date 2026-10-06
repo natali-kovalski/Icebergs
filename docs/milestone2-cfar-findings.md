@@ -4,14 +4,18 @@ Scene: `S1A_IW_20250508T094925` (Sentinel-1A IW, HH/HV, HyP3 RTC gamma0, 20 m, U
 
 **Result:** CA-CFAR on HV finds **126 candidate targets** at open sea. Visual review shows mostly compact point targets (icebergs or ships). The remaining false alarms are mainly loose sea-ice fragments near the pack ice, at the low-contrast end. Open-sea clutter false alarms are rare.
 
+> **Since this write-up:** the pipeline now runs on **10 m** RTC and adds an **HH co-pol check** (step 4 of the README method). At 10 m the oversampled HV speckle passes the 2 px minimum, and the HH check removes it. The numbers below are from the original 20 m run. For multi-date results and per-berg recall against IIP labels, see [validation-findings.md](validation-findings.md).
+
 ## Method
 
 | Step | What | Key parameters (`config.yaml`) |
 |---|---|---|
-| 1. CA-CFAR | Pixel vs. mean of a background ring, on linear intensity; masked pixels excluded | `guard_px: 5`, `background_px: 20` (41×41 minus 11×11), `pfa: 1e-6` |
-| 2. Threshold | Gamma speckle model: pixel / ring-mean ratio ~ F(2L, 2NL); ENL `L` estimated from the scene | `enl: auto`, `enl_cell_px: 25` |
-| 3. Components | 8-connected, 2–2000 px; drop if within 200 m of land, pack ice or nodata | `min_area_px`, `max_area_px`, `edge_buffer_px: 10` |
-| 4. Strip rejection | Grow each target to the 3×3-smoothed region > 4 dB above background; reject if longer than 300 m | `grow_db: 4`, `max_structure_px: 15` |
+| 1. CA-CFAR | Pixel vs. mean of a background ring, on linear intensity; masked pixels excluded | `guard_m: 100`, `background_m: 400` (41×41 minus 11×11 px at 20 m), `pfa: 1e-6` |
+| 2. Threshold | Gamma speckle model: pixel / ring-mean ratio ~ F(2L, 2NL); ENL `L` estimated from the scene | `enl: auto`, `enl_cell_m: 500` |
+| 3. Components | 8-connected, 2 px to 0.8 km²; drop if within 200 m of land, pack ice or nodata | `min_area_px: 2`, `max_area_m2: 800000`, `edge_buffer_m: 200` |
+| 4. Strip rejection | Grow each target to the 3×3-smoothed region > 4 dB above background; reject if longer than 300 m | `grow_db: 4`, `max_structure_m: 300` |
+
+Size parameters were originally in pixels. They are now in metres and converted per scene, so these 20 m results are unchanged.
 
 Implementation: box filters (`scipy.ndimage.uniform_filter`), row blocks with a halo so the 10k × 14k scene fits in memory. About 2 minutes per scene per band.
 
@@ -106,9 +110,9 @@ python -m iceberg_sar.cli validate data\raw\S1A_IW_20250508T094925_DHP_RTC20_G_g
 - **Coarse validation only.** The ground truth is per 1° square (about 7,800 km²) and 10 h old, with reconnaissance from 2 days earlier. It can check counts, not individual detections.
 
 ## Next steps
-1. Mask or flag detections west of the NAIS sea-ice limit. *Done in part:* each detection now has `distance_to_ice_km`, measured to the edge of the Milestone 1 pack-ice mask (which is already buffered by 1 km). On 8 May, 24 of 126 detections lie within 2 km of it, and chip review shows ice fragments are concentrated there.
-2. Stretch: OS-CFAR or K-distribution CFAR for heavier-tailed clutter (`cfar.variant` is ready for it).
-3. Run on 2–3 more spring scenes to check parameter stability.
+1. Mask or flag detections west of the NAIS sea-ice limit. *Done:* each detection now has `distance_to_ice_km`, measured to the edge of the Milestone 1 pack-ice mask (which is already buffered by 1 km). On 8 May, 24 of 126 detections lie within 2 km of it, and chip review shows ice fragments are concentrated there. The viewer greys out and can hide candidates within `viewer.near_ice_km` (5 km).
+2. Stretch: OS-CFAR or K-distribution CFAR for heavier-tailed clutter (`cfar.variant` is ready for it). *Not done.*
+3. Run on 2–3 more spring scenes to check parameter stability. *Done:* 2025-05-02 and 05-14 at 10 m with NAIS counts, plus per-berg validation on 2019 scenes. See [validation-findings.md](validation-findings.md).
 
 ## Reproduce
 ```powershell
