@@ -95,7 +95,9 @@ def _polygons(geom: BaseGeometry) -> list[Polygon]:
 
 
 def _to_wgs84(gdf: gpd.GeoDataFrame, simplify_m: float) -> gpd.GeoDataFrame:
-    metric = gdf if gdf.crs and gdf.crs.is_projected else gdf.to_crs(gdf.estimate_utm_crs())
+    if gdf.empty:   # e.g. no pack ice in summer: bounds are NaN, so no UTM zone to estimate
+        return gdf.to_crs("EPSG:4326") if gdf.crs else gdf.set_crs("EPSG:4326")
+    metric =gdf if gdf.crs and gdf.crs.is_projected else gdf.to_crs(gdf.estimate_utm_crs())
     metric = metric.assign(geometry=metric.geometry.simplify(simplify_m))
     return metric.to_crs("EPSG:4326")
 
