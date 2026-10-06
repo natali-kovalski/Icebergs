@@ -1,169 +1,194 @@
 # Iceberg Alley SAR
 
-Detect icebergs off the coast of Newfoundland & Labrador in Sentinel-1 SAR imagery. Show the results on a CesiumJS globe with a timeline.
+Detecting icebergs off Newfoundland & Labrador in Sentinel-1 radar imagery, and putting them on an interactive CesiumJS globe with a timeline.
 
-> Work in progress. The full write-up comes in Milestone 4.
+![Cesium viewer: spring 2025 detections off NE Newfoundland](docs/img/viewer.png)
 
-## Status
+**In short:** a CFAR detector on Sentinel-1 cross-pol (HV) imagery finds **78% of the icebergs that International Ice Patrol analysts marked** on the same satellite pass (209 of 268, median position difference 128 m). It runs end to end with one command, from scene search to a time-dynamic CZML file for the viewer.
 
-| Milestone | State |
+## The problem
+
+Every spring, icebergs calved from Greenland glaciers drift south along the Labrador Current into "Iceberg Alley", the stretch of ocean off Newfoundland's northeast coast. They are a hazard to shipping, fishing vessels and offshore platforms on the Grand Banks. Aircraft reconnaissance is expensive and limited by weather. Synthetic aperture radar (SAR) sees through cloud and darkness, so satellite SAR is the main tool for wide-area iceberg surveillance.
+
+This project builds that pipeline on free Copernicus Sentinel-1 data, for the coast from Bonavista to St. Anthony, and checks it against the ground truth that exists.
+
+## Results
+
+| | |
 |---|---|
-| 0. Setup | Done |
-| 1. First masked scene (search, HyP3 RTC, land + pack-ice mask, quicklook) | Done |
-| 2. CA-CFAR detection + NAIS chart check | Done (OS-CFAR / K-distribution stretch not done) |
-| 3. Vue + CesiumJS viewer | Done |
-| Point-level validation (IIP sightings, Sentinel-2) | Done: **78% recall** against same-pass IIP labels, see [docs/validation-findings.md](docs/validation-findings.md) |
-| Experimental iceberg vs. ship CNN | Works, but treat it as a weak hint (see below) |
-| 4. Portfolio polish (write-up, screenshots, end-to-end `run` command) | Not started |
+| **Recall vs. same-pass IIP analyst labels** (2019-04-29) | **78%** (209 / 268), median offset 128 m |
+| Recall by berg size | small (15–60 m) 62%, medium (61–120 m) 81%, large (> 120 m) 0 of 4 |
+| Recall by distance from the coast | stable, 73–84% from 0 to 100 km |
+| Precision | not measurable without AIS ship positions (lower bound 31%) |
+| Runtime | about 17 min per 10 m scene on a laptop (masking + detection), after HyP3 processing |
 
-## Setup
+![Detections vs. IIP labels, 2019-04-29](docs/img/validation_20190429.png)
 
-Requires Python 3.11+.
+The viewer shows three spring 2025 passes (2025-05-02, 05-08, 05-14). In the 1° squares each scene covers, open-water detections are within 2–4× of the North American Ice Service chart estimate (106 vs. 26, 98 vs. 31, 137 vs. 71). The chart is per 1° square and partly modelled, so this is a sanity check, not a measurement. The full validation story, including the sources that didn't work, is in [docs/validation-findings.md](docs/validation-findings.md).
+
+## Data
+
+| Source | Use |
+|---|---|
+| **Sentinel-1 IW GRD** (Copernicus, via [ASF](https://search.asf.alaska.edu)) | Radar imagery, HH + HV polarization |
+| **ASF HyP3 RTC** | Terrain-corrected, calibrated GeoTIFFs: gamma0, linear power, 10 m, with incidence-angle map |
+| **OpenStreetMap land polygons** | Land mask, buffered 500 m to remove coastal clutter |
+| **NAIS daily iceberg chart** (IIP + Canadian Ice Service) | Count check per 1° square |
+| **IIP Iceberg Sightings Database** (NSIDC G00807) | Per-berg validation (database ends with the 2021 season) |
+| **Sentinel-2 L2A** (Earth Search) | Optical cross-check |
+
+## Method
+
+```mermaid
+flowchart LR
+    A[ASF search<br/>HH+HV scenes over AOI] --> B[HyP3 RTC<br/>gamma0, 10 m]
+    B --> C[Masks<br/>land + 500 m, pack ice from HV]
+    C --> D[CA-CFAR on HV<br/>linear intensity]
+    D --> E[Filters<br/>size, ice strips, HH check]
+    E --> F[GeoJSON<br/>per-target attributes]
+    F --> G[CZML] --> H[Vue + CesiumJS<br/>viewer]
+    F --> V[Validation<br/>NAIS, IIP, Sentinel-2]
+```
+
+A few SAR terms, briefly:
+- **Backscatter** is how much radar energy a surface returns to the satellite. Calm water reflects energy away, so it is dark. An iceberg's edges and facets reflect energy back, so it is bright.
+- **Polarization:** HH sends and receives horizontally polarized waves, HV sends horizontal and receives vertical. Sea clutter is much weaker in HV, so icebergs stand out more there. Detection runs on HV, and HH is a second check.
+- **Speckle** is the grainy noise in every SAR image. Its statistics set the detection threshold. **ENL** (equivalent number of looks) measures how strong it is.
+- **CFAR** (constant false alarm rate) compares each pixel with its local background instead of using a fixed threshold, so the false-alarm rate stays the same in calm and rough water.
+- **dB vs. linear:** detection math runs on linear power. Reported values and displays use decibels.
+
+![CFAR detections, HV, 2025-05-08](docs/img/detections_20250508.png)
+*HV backscatter on 2025-05-08 with land and pack ice masked (black) and detections circled in red. The vertical brightness steps are the three IW sub-swaths.*
+
+The pipeline steps (parameters in [config.yaml](config.yaml), lengths in metres so tuning carries over between 10 m and 20 m pixels):
+
+1. **Masks.** Land from OSM, buffered 500 m. Pack ice from HV statistics on 200 m cells: pack ice is bright and uniform, open water is dark, and a cell with an iceberg is spiky. Pack ice is masked with a 1 km buffer, and each detection keeps its distance to the ice.
+2. **CA-CFAR on HV.** The background is the mean of a ring (400 m half-width, minus a 100 m guard window that keeps the target's own energy out). The threshold comes from a false-alarm rate of 10⁻⁶ under a gamma speckle model, with ENL estimated from the scene. HyP3 removes the HV thermal noise floor, so open-water HV sits at −30 to −40 dB with ENL below 1. A textbook ENL would set the threshold far too low.
+3. **Connected components** of 2 px to 0.8 km². Components within 200 m of land, ice or nodata are dropped.
+4. **Ice-strip rejection.** Each target is grown to the region more than 4 dB above background. Structures longer than 300 m are thin strips of loose ice, not bergs.
+5. **HH co-pol check.** A target must also be 6 dB above background in HH. 10 m IW GRD is oversampled (true resolution about 20 m), so HV speckle grains span about 2×2 px and pass the size filter. Real targets are bright in both polarizations.
+6. **Output:** GeoJSON points with area, extent, structure length, peak and mean dB per band, contrast, incidence angle and distance to pack ice. CZML for the viewer, with one time interval per scene.
+
+How the detector was tuned is in [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
+
+## Quickstart
+
+Requires Python 3.11+, Node 20+, and a free [NASA Earthdata](https://urs.earthdata.nasa.gov) account. In Earthdata, go to Applications > Authorized Apps and approve **ASF HyP3**, otherwise HyP3 refuses API logins.
 
 ```powershell
+git clone https://github.com/natali-kovalski/Icebergs.git
+cd Icebergs
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-copy .env.example .env         # then fill in Earthdata credentials
-python -m iceberg_sar.cli --help
+copy .env.example .env             # fill in EARTHDATA_USERNAME / EARTHDATA_PASSWORD
 python -m iceberg_sar.cli init-dirs
 ```
 
-## Milestone 1: first masked scene
-
-One-time setup: log in at https://urs.earthdata.nasa.gov, go to Applications > Authorized Apps, and approve the ASF HyP3 app. Without this, HyP3 refuses API logins.
+Run the whole pipeline for the demo dates, then open the viewer:
 
 ```powershell
-python -m iceberg_sar.cli search --pol HH+HV        # list scenes; footprints -> data/outputs/
-python -m iceberg_sar.cli order S1A_IW_GRDH_1SDH_20250508T094925_20250508T094950_059101_075526_EB40
-python -m iceberg_sar.cli download                  # waits for HyP3 (often 30-60 min), unzips to data/raw/
-python -m iceberg_sar.cli land-mask                 # one-time ~900 MB OSM download, clipped to the AOI
-python -m iceberg_sar.cli preprocess data\raw\<product_dir>
+python -m iceberg_sar.cli run --start 2025-05-01 --end 2025-05-15 --dry-run   # plan + credit estimate
+python -m iceberg_sar.cli run --start 2025-05-01 --end 2025-05-15
+cd viewer
+npm install
+npm run dev                        # http://localhost:5173
 ```
 
-Outputs:
-- `data/interim/<product>/<product>_<POL>_masked.tif`: linear power with land (+500 m), out-of-AOI, and nodata set to NaN. This is the CFAR input.
-- `data/outputs/quicklooks/<product>_<POL>_db.png`: dB quicklook. Masked areas are transparent.
+`run` does the following:
+1. Searches ASF for HH+HV scenes over [aoi.geojson](aoi.geojson) and keeps the `run.max_scenes` (default 3) that cover the AOI best.
+2. Orders HyP3 RTC jobs, waits for them (often 30–60 min) and downloads them. Each 10 m scene costs 60 of the monthly HyP3 credits, and `--dry-run` shows the total first.
+3. Builds the land mask (one-time ~900 MB OSM download), preprocesses each scene, runs detection, and writes `viewer/public/data/iceberg_alley.czml`.
 
-Land data: (c) OpenStreetMap contributors, ODbL, via osmdata.openstreetmap.de.
+Re-runs reuse everything on disk: downloaded products, masked rasters and detections. Use `--force` to redo preprocessing and detection after changing parameters. Without `--start`/`--end`, the dates come from `search` in `config.yaml`.
 
-## Milestone 2: CFAR detection
+In the viewer:
+- Scrub the timeline to step through passes, and click a target to see its attributes.
+- Open-water targets are coloured by contrast and sized by structure length. Targets within 5 km of pack ice are grey (likely ice floes), and a checkbox hides them.
+- Toggle the scene footprint and the pack-ice mask.
+- The basemap is Esri World Imagery, so no Cesium ion token is needed. `npm run build` gives a static site in `viewer/dist/`.
+
+## Individual steps
+
+`run` chains these, and each can be run on its own (`--help` on any command):
 
 ```powershell
-python -m iceberg_sar.cli detect data\raw\<product_dir>              # CFAR on HV (config default)
-python -m iceberg_sar.cli detect data\raw\<product_dir> --band HH    # compare against HH
+python -m iceberg_sar.cli search --pol HH+HV                 # scene list + footprints -> data/outputs/
+python -m iceberg_sar.cli order <granule>                    # one HyP3 RTC job (skips if already ordered)
+python -m iceberg_sar.cli download                           # wait, download, unzip to data/raw/
+python -m iceberg_sar.cli land-mask
+python -m iceberg_sar.cli preprocess data\raw\<product_dir>  # masked linear rasters + dB quicklooks
+python -m iceberg_sar.cli detect data\raw\<product_dir>      # CFAR on HV; --band HH to compare
+python -m iceberg_sar.cli czml --start 2025-05-01 --end 2025-05-15
 ```
 
-Method (parameters in `config.yaml` under `cfar` and `detections`):
-1. **CA-CFAR** on linear intensity. The clutter level is the mean of a background ring (400 m half-width minus a 100 m guard; window sizes are set in metres and converted per scene, e.g. 81×81 minus 21×21 px at 10 m). A pixel is a detection if it is brighter than `alpha` × that mean. `alpha` comes from `pfa` under a gamma speckle model: the pixel/ring-mean ratio is F(2L, 2NL) distributed. The ENL `L` is estimated from the scene (`enl: auto`). Masked pixels are excluded from the ring.
-2. **Connected components** (8-connected), at least 2 px and at most 0.8 km². Components within 200 m of land, pack ice, or nodata are dropped.
-3. **Sea-ice strip rejection.** Each target is grown to the 3×3-smoothed region more than 4 dB above background. If that structure is longer than 300 m, the target sits on a strip of loose ice rather than being a berg or ship.
-4. **Co-pol (HH) check.** The target's HH peak must be at least 6 dB above the HH ring mean (`copol_min_contrast_db`). Icebergs are bright in both polarizations; HV speckle spikes are not. This matters at 10 m: Sentinel-1 IW GRD has ~20 m true resolution, so 10 m pixels are oversampled, speckle grains span ~2×2 px, and the 2 px minimum alone lets them through.
+Outputs (all under the gitignored `data/`):
+- `data/interim/<product>/<product>_<POL>_masked.tif`: linear power, masked areas NaN. This is the CFAR input.
+- `data/outputs/quicklooks/<product>_<POL>_db.png`: dB quicklook.
+- `data/outputs/detections/<product>_HV_detections.{geojson,png,json}`: detections (EPSG:4326), overlay and run summary.
 
-Outputs in `data/outputs/detections/`:
-- `<product>_<BAND>_detections.geojson`: EPSG:4326 points with `id`, `scene_id`, `timestamp`, `lat`/`lon`, `area_px`, `area_m2`, `extent_m`, `structure_m`, `peak_db_*`/`mean_db_*` per band, `background_db`, `contrast_db`, `copol_contrast_db`, `incidence_deg`, `distance_to_ice_km` (to the edge of the buffered pack-ice mask; NaN if the scene has no pack ice).
-- `<product>_<BAND>_detections.png`: dB quicklook with detections circled.
-- `<product>_<BAND>_detections.json`: run summary (ENL, threshold, count).
-
-Count check against the North American Ice Service (IIP + Canadian Ice Service) iceberg chart:
+## Validation
 
 ```powershell
-python -m iceberg_sar.cli ground-truth 2025-05-08     # downloads daily chart GIFs to data/ground_truth/
+python -m iceberg_sar.cli ground-truth 2025-05-08                     # NAIS chart GIFs
 python -m iceberg_sar.cli validate data\raw\<product_dir> --counts validation\nais_20250508_counts.csv
-```
-
-The chart gives icebergs per 1-degree square, and it is only published as an image. For each new date, transcribe the squares covering the scene into a CSV like `validation/nais_20250508_counts.csv`. Findings: [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
-
-## Point-level validation
-
-The NAIS chart only gives counts per 1° square. For per-berg recall, detections are matched one-to-one (within 500 m, drift-corrected when the truth is not simultaneous) against:
-
-- **IIP Iceberg Sightings Database** (NSIDC G00807, seasons up to 2021). Sightings that IIP analysts marked on the same Sentinel-1 pass have no drift, so they give the cleanest recall. Aircraft sightings are hours later.
-- **Sentinel-2 L2A optical targets** (Earth Search COGs): isolated bright objects in open water on the same date.
-
-```powershell
-python -m iceberg_sar.cli iip-sightings 2019                                            # download a season
+python -m iceberg_sar.cli iip-sightings 2019                          # IIP sightings season
 python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth iip-satellite --no-open-water
-python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth iip-aircraft
-python -m iceberg_sar.cli s2-targets data\raw\<product_dir>                             # optical targets for the scene date
+python -m iceberg_sar.cli s2-targets data\raw\<product_dir>           # Sentinel-2 optical targets
 python -m iceberg_sar.cli validate-points data\raw\<product_dir> --truth s2
 ```
 
-**Result (2019-04-29, 10 m RTC):** the detector finds **209 of 268** IIP-labelled bergs (78%), median offset 128 m. Recall is 62% for small bergs (15–60 m), 81% for medium bergs (61–120 m), and 0 of 4 for bergs over 120 m. Precision can't be measured without AIS vessel positions. Aircraft sightings and Sentinel-2 were inconclusive (drift, loose sea ice, bergs inshore). Full write-up: [docs/validation-findings.md](docs/validation-findings.md). Outputs go to `data/outputs/validation/`.
+- The NAIS chart is published only as an image. The counts per 1° square are hand-transcribed in [validation/](validation/).
+- Point matching is one-to-one (Hungarian assignment) within 500 m. When the truth is not simultaneous with the radar pass, a common drift offset is estimated and checked against chance.
 
-## Milestone 3: Cesium viewer
+The headline number uses IIP sightings marked on the same Sentinel-1 pass. That has no drift, but it is not independent: the analysts looked at the same radar image. Aircraft sightings (5–7 h later) and Sentinel-2 (loose sea ice in April, bergs mostly inshore in June) were inconclusive. The details are in [docs/validation-findings.md](docs/validation-findings.md).
 
-A Vue 3 + CesiumJS app. The timeline steps through the scenes, and you can click a candidate to see its attributes.
+## Limitations
 
-```powershell
-python -m iceberg_sar.cli czml        # all *_HV_detections.geojson -> viewer/public/data/iceberg_alley.czml
-cd viewer
-npm install
-npm run dev                           # http://localhost:5173
-```
-
-- Each scene stays on the timeline until the next scene starts. The last one stays for `viewer.last_interval_days`.
-- Candidates within `viewer.near_ice_km` (default 5 km) of the pack-ice mask are grey and flagged `near_ice`. They are likely ice floes (88% of the 2025-05-02 detections). The **Near-ice candidates** checkbox hides them. Nothing is deleted.
-- Open-water candidates are coloured by `contrast_db` and sized by `structure_m`. The scene footprint and pack-ice mask can be toggled.
-- The basemap is Esri World Imagery, so no Cesium ion token is needed. You can set `VITE_CESIUM_ION_TOKEN` in `viewer/.env` to enable ion services.
-- `npm run build` writes a static site to `viewer/dist/` that any static host can serve.
+- **Precision is unknown.** 475 of 684 detections on the validation pass have no IIP label. They are a mix of unrecorded bergs, fishing vessels and false alarms, in unknown proportions. Separating them needs AIS vessel positions.
+- **Large bergs are missed** (0 of 4 over 120 m). The 300 m strip filter and a guard window smaller than the berg are the likely causes.
+- **Small bergs are harder** (62% recall), and single-pixel targets are removed by the 2 px minimum.
+- **Sea state matters.** On rougher days the HV background rises 3–4 dB and small bergs lose contrast.
+- **Near pack ice, many detections are ice floes.** They are flagged by distance to ice, not removed.
+- **CA-CFAR with gamma speckle** understates the heavy tails of real sea clutter, so the actual false-alarm rate is higher than 10⁻⁶. OS-CFAR or K-distribution CFAR is the obvious next step (`cfar.variant` has a slot for it).
+- **No ship/iceberg discrimination** you can rely on (see the experimental classifier below).
 
 ## Experimental: iceberg vs. ship classifier
 
-A small CNN trained on the Kaggle [Statoil/C-CORE Iceberg Classifier Challenge](https://www.kaggle.com/c/statoil-iceberg-classifier-challenge) chips (1,604 labelled 75×75 HH/HV chips in dB). It adds `iceberg_prob` to each detection. **Treat it as a weak hint, not a label** (see below).
+A small CNN trained on the Kaggle [Statoil/C-CORE Iceberg Classifier Challenge](https://www.kaggle.com/c/statoil-iceberg-classifier-challenge) chips adds `iceberg_prob` to each detection. On Kaggle it reaches 0.23 log loss (5-fold out-of-fold, 90% accuracy). On our scenes it is mostly unsure, and two model variants agree on only 70% of open-water targets. **Use it as a sort key for review, not as a label.**
 
 ```powershell
 pip install -e .[ml]                           # torch, scikit-learn, py7zr
-# put train.json from Kaggle in data/kaggle/ (Kaggle terms: don't redistribute)
-python -m iceberg_sar.cli train-classifier     # 5-fold CV for each variant, ~1 min each on a GPU
+# put train.json from Kaggle in data/kaggle/ (competition terms: don't redistribute)
+python -m iceberg_sar.cli train-classifier
 python -m iceberg_sar.cli classify data\raw\<product_dir>
 ```
 
-Output: `<scene>_HV_classified.geojson` (detections + `iceberg_prob`, `iceberg_prob_hhhv`, `iceberg_prob_hh`, chip diagnostics) and `<scene>_HV_classified_chips.png` (most iceberg-like / ship-like / uncertain chips).
+<details>
+<summary>How the chips were matched to Kaggle, and why the output is a weak hint</summary>
 
-**Matching our chips to Kaggle.** We measured both datasets instead of assuming:
-
-- *Resolution matches.* Kaggle chips have the same speckle correlation (lag-1 ≈ 0.6) and ENL (≈ 4) as our 10 m RTC, and 1,470 of 1,471 incidence angles fall in the IW swath (29–46°). So chips are cut at native 10 m, without resampling.
-- *Radiometry doesn't match, so we correct it.* HyP3 gives gamma0, Kaggle is sigma0, so we multiply by cos(incidence). HyP3 also removes the HV thermal noise floor (calm sea HV ≈ −40 dB), while Kaggle keeps it (−24 to −29 dB, depending on incidence). We add speckled noise until each chip's HV background matches the Kaggle level at that incidence. After this, open-water chips match Kaggle in background level, ENL and speckle correlation, in both bands.
+- *Resolution matches.* Kaggle chips have the same speckle correlation (lag-1 ≈ 0.6) and ENL (≈ 4) as our 10 m RTC, and 1,470 of 1,471 incidence angles fall in the IW swath (29–46°). Chips are cut at native 10 m.
+- *Radiometry doesn't match, so it is corrected.* HyP3 gives gamma0 and Kaggle is sigma0, so chips are multiplied by cos(incidence). HyP3 also removes the HV noise floor (calm sea ≈ −40 dB) while Kaggle keeps it (−24 to −29 dB), so speckled noise is added to match the Kaggle HV background at each incidence angle.
 - Kaggle's missing incidence angles are all ships. They are imputed to the mean so the model can't learn that leak.
+- On Kaggle, 79% of chips get p < 0.2 or > 0.8. On our 343 open-water detections, only 26% do.
+- Most of our targets are 2–10 px, against a Kaggle median of about 74 px above background, so small targets are out of distribution.
+- Shifting the HV noise floor by ±2 dB changes p by 0.07 on average and flips 9–13% of labels.
+- Near pack ice, chips contain ice texture Kaggle never shows, so p is meaningless there.
 
-**Results.** Two variants: `hhhv` (both bands, fills `iceberg_prob`) and `hh` (HH only, a control without the noise-floor assumption).
+</details>
 
-| | Kaggle 5-fold out-of-fold log loss | Accuracy |
-|---|---|---|
-| hhhv | 0.229 | 0.90 |
-| hh | 0.266 | 0.89 |
-| always predict the class prior | 0.691 | 0.53 |
+## Repository layout
 
-On Kaggle, the probabilities are well calibrated: of chips scored 0.8–1.0, 96% are icebergs, and of chips scored 0–0.2, 3% are.
-
-**How much to trust it on our scenes.** There is no ship ground truth (no AIS) for our dates, so these are consistency checks, not accuracy:
-
-- *The model is unsure on our data.* On Kaggle, 79% of chips get p < 0.2 or > 0.8. On our 343 open-water detections, only 26% do.
-- *The two variants agree on 70% of open-water detections.* Only 32 detections are confidently classified by both, 14 as icebergs and 18 as ships.
-- *Size gap:* most of our targets are 2–10 px, while Kaggle targets have a median of ~74 px above background. Small targets are out of distribution.
-- *Shifting the HV noise floor by ±2 dB* changes p by 0.07 on average and flips 9–13% of labels.
-- *Near pack ice* (within 5 km), chips contain ice texture that Kaggle never shows. p is high there (0.79), but that says nothing useful.
-- Visually the ranking makes sense: irregular blobs bright in both bands score high, and sharp point targets with azimuth streaks score low.
-
-Use `iceberg_prob` as a sort key for review, or trust it only where both variants agree with high confidence. Validating it properly needs AIS ship positions for the same passes.
-
-## Layout
-
-- `config.yaml`: all pipeline parameters.
-- `aoi.geojson`: area of interest (EPSG:4326).
-- `src/iceberg_sar/`: pipeline code (`classify/` is the experimental CNN).
-- `data/`: raw, interim, output, ground-truth and model data. It is gitignored.
-- `docs/`: findings write-ups ([CFAR](docs/milestone2-cfar-findings.md), [validation](docs/validation-findings.md)) and figures.
-- `validation/`: hand-transcribed NAIS chart counts for 2025-05-02, 05-08 and 05-14.
-- `viewer/`: Vue + CesiumJS front end (`src/scene.ts` holds the Cesium logic).
-- `tests/`: pytest suite (`pytest`).
-- `notebooks/`: exploration only.
+- `config.yaml`: all parameters. `aoi.geojson`: the area of interest (EPSG:4326).
+- `src/iceberg_sar/`: the pipeline. `pipeline.py` is the end-to-end `run`, `cfar.py` + `detections.py` the detector, `seaice.py` the pack-ice mask, `export_czml.py` the viewer export, `classify/` the experimental CNN.
+- `viewer/`: Vue 3 + Vite + CesiumJS (`src/scene.ts` holds the Cesium logic).
+- `docs/`: findings write-ups and figures. `validation/`: transcribed NAIS chart counts.
+- `tests/`: pytest suite (`pytest`). `data/`: everything downloaded or generated (gitignored).
 
 ## Data terms
 
-- Sentinel-1 data is from Copernicus via ASF. Sentinel-2 L2A is from Copernicus via Earth Search (Element 84).
+- Contains modified Copernicus Sentinel data (2019–2025), via ASF DAAC and Earth Search (Element 84).
 - Iceberg charts: North American Ice Service (International Ice Patrol + Canadian Ice Service).
 - Iceberg sightings: International Ice Patrol Iceberg Sightings Database, NSIDC G00807.
-- Land polygons: (c) OpenStreetMap contributors, ODbL.
+- Land polygons: © OpenStreetMap contributors, ODbL.
 - Kaggle Statoil/C-CORE chips: used under the competition terms and not redistributed.

@@ -68,6 +68,7 @@ iceberg-alley-sar/
 │   ├── matching.py       # one-to-one matching, drift-offset estimation
 │   ├── pointval.py       # point-level precision / recall
 │   ├── export_czml.py    # detections -> CZML for Cesium
+│   ├── pipeline.py       # end-to-end `run` for a date range
 │   ├── chips.py          # Kaggle-matched chips (experimental classifier)
 │   ├── classify/         # experimental iceberg vs. ship CNN
 │   └── cli.py            # typer CLI tying it together
@@ -81,7 +82,7 @@ iceberg-alley-sar/
 - **Scenes:** spring 2025 (2025-05-02, 05-08, 05-14) in the viewer, checked against NAIS charts. Spring 2019 (2019-04-15, 04-29) and 2020-06-10 for point-level validation.
 - **Validation (beyond the plan):** 78% recall (209/268) against same-pass IIP analyst labels on 2019-04-29, median offset 128 m. Precision is not measurable without AIS. Large bergs (>120 m) are missed. See `docs/validation-findings.md`.
 - **Experimental:** iceberg vs. ship CNN trained on Kaggle chips (`iceberg_prob`). Use it as a review hint only; see the README.
-- **Milestone 4: not started.** README write-up, screenshots, and an end-to-end `run` command (there is no `cli.py run` yet).
+- **Milestone 4: done.** Portfolio README with screenshots, `cli.py run` end to end for a date range (`pipeline.py`, scene selection in `run:` in `config.yaml`), and two LinkedIn post drafts in `docs/linkedin-posts.md` (local only, excluded via `.git/info/exclude`, never commit). Not done: Dockerfile, deployed static viewer.
 - **Stretch not done:** OS-CFAR / K-distribution (`cfar.variant` has a slot for it).
 
 ## Milestones

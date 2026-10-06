@@ -1,7 +1,7 @@
 """CZML export: per-scene time windows, near-ice flag, footprint and pack-ice packets."""
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import geopandas as gpd
@@ -100,6 +100,12 @@ def test_find_scenes_only_configured_resolution(cfg: Config) -> None:
     assert [s.name for s in find_scenes(cfg, "HV")] == list(SCENES)
     cfg.raw["hyp3"]["resolution"] = 10
     assert [s.name for s in find_scenes(cfg, "HV")] == [name]
+
+
+def test_find_scenes_date_range_is_inclusive(cfg: Config) -> None:
+    assert [s.start.day for s in find_scenes(cfg, "HV", start=date(2025, 5, 8))] == [8]
+    assert [s.start.day for s in find_scenes(cfg, "HV", end=date(2025, 5, 2))] == [2]
+    assert find_scenes(cfg, "HV", date(2025, 5, 3), date(2025, 5, 7)) == []
 
 
 def test_point_size_grows_with_structure() -> None:

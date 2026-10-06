@@ -22,6 +22,12 @@ search:
   beam_modes: [IW, EW]      # IW is usually VV/VH, EW is usually HH/HV. Check each scene.
   max_results: 500
 
+run:
+  # Scene selection for `run` (end to end over search.start_date .. end_date, or --start/--end).
+  pol: HH+HV                # CFAR and the pack-ice mask are tuned on HV; null = any
+  min_aoi_overlap: 0.05     # skip scenes that barely touch the AOI
+  max_scenes: 3             # best-covering scenes per run; caps HyP3 credits (60/scene at 10 m). null = all
+
 hyp3:
   job_type: RTC_GAMMA
   resolution: 10            # metres. 10 resolves small bergs (60 credits/scene, ~4x disk); 20 is cheaper (15).

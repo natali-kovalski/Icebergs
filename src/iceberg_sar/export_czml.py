@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -192,11 +192,13 @@ def polygon_packets(geom: BaseGeometry, id_prefix: str, availability: str,
     return packets
 
 
-def find_scenes(cfg: Config, band: str) -> list[Scene]:
+def find_scenes(cfg: Config, band: str, start: date | None = None,
+                end: date | None = None) -> list[Scene]:
     """Scenes with a detections GeoJSON for `band` at the configured HyP3 resolution, by time.
 
     Filtering on the product's RTC resolution (e.g. `_RTC10_`) keeps a date from showing
-    twice when it was processed at both 20 m and 10 m.
+    twice when it was processed at both 20 m and 10 m. `start` / `end` (inclusive) keep only
+    scenes acquired in that date range.
     """
     det_dir = cfg.path("outputs") / "detections"
     rtc = f"_RTC{int(cfg.section('hyp3')['resolution'])}_"
@@ -204,6 +206,9 @@ def find_scenes(cfg: Config, band: str) -> list[Scene]:
     for f in det_dir.glob(f"*{rtc}*_{band}_detections.geojson"):
         name = f.name.removesuffix(f"_{band}_detections.geojson")
         summary = json.loads(f.with_suffix(".json").read_text(encoding="utf-8"))
+        day = _parse(summary["timestamp"]).date()
+        if (start and day < start) or (end and day > end):
+            continue
         shp = cfg.path("raw") / name / f"{name}_shape.shp"
         ice = cfg.path("outputs") / "seaice" / f"{name}_seaice.geojson"
         scenes.append(Scene(name, _parse(summary["timestamp"]), f,
@@ -290,8 +295,9 @@ def viewer_params(cfg: Config) -> ViewerParams:
     )
 
 
-def export_czml(cfg: Config, band: str = "HV") -> tuple[Path, list[dict[str, Any]]]:
-    packets = build_czml(find_scenes(cfg, band), viewer_params(cfg))
+def export_czml(cfg: Config, band: str = "HV", start: date | None = None,
+                end: date | None = None) -> tuple[Path, list[dict[str, Any]]]:
+    packets = build_czml(find_scenes(cfg, band, start, end), viewer_params(cfg))
     out = cfg.path("czml")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(packets, separators=(",", ":")), encoding="utf-8")

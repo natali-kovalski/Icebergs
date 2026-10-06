@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -198,16 +199,24 @@ def validate(
     typer.echo(f"ok  {out}")
 
 
+DateOption = Annotated[datetime | None, typer.Option(formats=["%Y-%m-%d"])]
+
+
 @app.command()
 def czml(
     config: ConfigOption = DEFAULT_CONFIG,
     band: Annotated[str, typer.Option(help="Which detections to export.")] = "HV",
+    start: DateOption = None,
+    end: DateOption = None,
 ) -> None:
-    """Export all scenes' detections, footprints and pack ice to one CZML for the viewer."""
+    """Export scenes' detections, footprints and pack ice to one CZML for the viewer.
+
+    Without --start/--end, every scene with detections at the configured resolution is used.
+    """
     from iceberg_sar.export_czml import export_czml
 
     cfg = load_config(config)
-    out, packets = export_czml(cfg, band)
+    out, packets = export_czml(cfg, band, start and start.date(), end and end.date())
     for p in packets:
         if p["id"].startswith("scene/"):
             s = p["properties"]
@@ -215,6 +224,29 @@ def czml(
                        f"open water={s['n_open_water']}  near ice={s['n_near_ice']}")
     typer.echo(f"ok  {out}")
 
+
+@app.command()
+def run(
+    config: ConfigOption = DEFAULT_CONFIG,
+    start: DateOption = None,
+    end: DateOption = None,
+    dry_run: Annotated[bool, typer.Option(help="Search and show the plan; order nothing.")] = False,
+    force: Annotated[bool, typer.Option(help="Redo preprocessing and detection.")] = False,
+) -> None:
+    """End to end for a date range: search, HyP3 RTC, masks, CFAR, CZML for the viewer.
+
+    Dates default to `search.start_date` / `end_date`; scene selection is set in `run:`.
+    Already downloaded products and existing outputs are reused.
+    """
+    from iceberg_sar.pipeline import run_pipeline
+
+    cfg = load_config(config)
+    s = cfg.section("search")
+    d0 = start.date() if start else date.fromisoformat(str(s["start_date"]))
+    d1 = end.date() if end else date.fromisoformat(str(s["end_date"]))
+    out = run_pipeline(cfg, d0, d1, dry_run=dry_run, force=force, log=typer.echo)
+    if out:
+        typer.echo("view it:  cd viewer; npm install; npm run dev")
 
 
 @app.command("train-classifier")

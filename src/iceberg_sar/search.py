@@ -49,8 +49,10 @@ def _record(product: asf.ASFProduct, aoi: BaseGeometry) -> dict[str, Any]:
     }
 
 
-def search_scenes(cfg: Config) -> gpd.GeoDataFrame:
-    """Search ASF for GRD scenes intersecting the AOI in the configured date range."""
+def search_scenes(
+    cfg: Config, start: str | None = None, end: str | None = None
+) -> gpd.GeoDataFrame:
+    """Search ASF for GRD scenes intersecting the AOI; dates default to the config's range."""
     s = cfg.section("search")
     aoi = load_aoi(cfg.path("aoi"))
     results = asf.geo_search(
@@ -58,14 +60,15 @@ def search_scenes(cfg: Config) -> gpd.GeoDataFrame:
         platform=asf.PLATFORM.SENTINEL1,
         processingLevel=s["processing_levels"],
         beamMode=s["beam_modes"],
-        start=s["start_date"],
-        end=s["end_date"],
+        start=start or s["start_date"],
+        end=end or s["end_date"],
         maxResults=s.get("max_results"),
     )
     records = [_record(r, aoi) for r in results]
+    if not records:
+        return gpd.GeoDataFrame(columns=[*SCENE_COLUMNS, "geometry"], geometry="geometry",
+                                crs="EPSG:4326")
     gdf = gpd.GeoDataFrame(records, geometry="geometry", crs="EPSG:4326")
-    if gdf.empty:
-        return gdf
     return gdf.sort_values("start_time").reset_index(drop=True)
 
 
