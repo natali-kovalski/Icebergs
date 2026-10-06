@@ -76,8 +76,8 @@ How the detector was tuned is in [docs/milestone2-cfar-findings.md](docs/milesto
 Requires Python 3.11+, Node 20+, and a free [NASA Earthdata](https://urs.earthdata.nasa.gov) account. In Earthdata, go to Applications > Authorized Apps and approve **ASF HyP3**, otherwise HyP3 refuses API logins.
 
 ```powershell
-git clone https://github.com/natali-kovalski/Icebergs.git
-cd Icebergs
+git clone https://github.com/natali-kovalski/iceberg-alley-sar.git
+cd iceberg-alley-sar
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
