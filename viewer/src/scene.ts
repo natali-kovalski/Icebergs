@@ -103,8 +103,9 @@ export async function loadDetections(viewer: Viewer): Promise<{
         date: (prop(e, "start") as string).slice(0, 10),
         nDetections: prop(e, "n_detections") as number,
         nOpenWater: prop(e, "n_open_water") as number,
-        nNearIce: prop(e, "n_near_ice") as number,
-        iceAreaKm2: prop(e, "ice_area_km2") as number,
+        // 0 when the scene is ice-free (summer) or no pack-ice mask was built.
+        nNearIce: (prop(e, "n_near_ice") as number | undefined) ?? 0,
+        iceAreaKm2: (prop(e, "ice_area_km2") as number | undefined) ?? 0,
       };
     })
     .sort((a, b) => JulianDate.compare(a.start, b.start));

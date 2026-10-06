@@ -40,6 +40,7 @@ class DetectionParams:
     grow_db: float = 4.0  # region-growing level above background for `bright_structures`
     max_structure_px: int = 15  # reject targets on bright structures longer than this
     copol_min_contrast_db: float | None = None  # co-pol peak over co-pol background; None = off
+    merge_by_structure: bool = True  # CFAR cores in one grown blob = one target
     block_rows: int = 1024
 
 
@@ -105,8 +106,17 @@ def component_table(
     untrusted global row at the bottom of the block. `structures` is the grown mask from
     `bright_structures`; a target's structure extent is that of the grown blob containing it.
     `copol` = (band, ring-mean background) of the co-pol band, for the co-pol check.
+    With `p.merge_by_structure`, CFAR cores in the same grown blob form one target: a ship
+    (or berg) often breaks into two cores tens of metres apart in azimuth.
     """
-    labels, n = ndimage.label(det, structure=EIGHT_CONNECTED)
+    grown, _ = ndimage.label(structures | det, structure=EIGHT_CONNECTED)
+    if p.merge_by_structure:
+        blob_ids = np.unique(grown[det])
+        n = len(blob_ids)
+        labels = np.zeros(det.shape, dtype=np.int32)
+        labels[det] = np.searchsorted(blob_ids, grown[det]) + 1
+    else:
+        labels, n = ndimage.label(det, structure=EIGHT_CONNECTED)
     if n == 0:
         return pd.DataFrame()
     slices = ndimage.find_objects(labels)
@@ -119,8 +129,7 @@ def component_table(
 
     owned = (top >= keep_rows[0]) & (top < keep_rows[1]) & (bottom <= trusted_stop)
     touches_edge = ndimage.maximum(near_edge, labels, idx).astype(bool)
-    grown, _ = ndimage.label(structures | det, structure=EIGHT_CONNECTED)
-    blob = ndimage.maximum(grown, labels, idx).astype(int)  # det is connected -> one blob
+    blob = ndimage.maximum(grown, labels, idx).astype(int)  # each target lies in one blob
     structure = _extent(ndimage.find_objects(grown))[blob - 1]
     keep = (
         owned
@@ -350,6 +359,7 @@ def detect_product(product_dir: Path, cfg: Config, band: str | None = None) -> d
         max_structure_px=px(d.get("max_structure_m", 300)),
         copol_min_contrast_db=(None if d.get("copol_min_contrast_db") is None
                                else float(d["copol_min_contrast_db"])),
+        merge_by_structure=bool(d.get("merge_by_structure", True)),
         block_rows=int(d.get("block_rows", 1024)),
     )
     table, transform, crs = detect_raster(masked, band, cfar, params)

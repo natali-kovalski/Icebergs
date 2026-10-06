@@ -150,7 +150,8 @@ def run_pipeline(cfg: Config, start: date, end: date, *, dry_run: bool = False,
             continue
         process_product(s.product_dir, land, cfg, p.band, force, log)
 
-    out, packets = export_czml(cfg, p.band, start=start, end=end)
+    # The viewer shows every processed scene, not just this run's date range.
+    out, packets = export_czml(cfg, p.band)
     n = sum(1 for k in packets if k["id"].startswith("scene/"))
     log(f"czml        {n} scene(s) -> {out}")
     return out

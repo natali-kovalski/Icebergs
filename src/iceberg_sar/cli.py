@@ -236,6 +236,7 @@ def run(
     """End to end for a date range: search, HyP3 RTC, masks, CFAR, CZML for the viewer.
 
     Dates default to `search.start_date` / `end_date`; scene selection is set in `run:`.
+    The CZML includes every scene processed so far, not only this date range.
     Already downloaded products and existing outputs are reused.
     """
     from iceberg_sar.pipeline import run_pipeline

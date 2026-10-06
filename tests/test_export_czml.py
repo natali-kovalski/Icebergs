@@ -1,4 +1,4 @@
-"""CZML export: per-scene time windows, near-ice flag, footprint and pack-ice packets."""
+﻿"""CZML export: per-scene time windows, near-ice flag, footprint and pack-ice packets."""
 
 import json
 from datetime import date, datetime
@@ -81,8 +81,16 @@ def cfg(tmp_path: Path) -> Config:
 
 def test_scene_intervals_chain_and_last_window() -> None:
     a, b = datetime(2025, 5, 2, 9, 48), datetime(2025, 5, 8, 9, 49)
-    assert scene_intervals([a, b], 6) == [(a, b), (b, datetime(2025, 5, 14, 9, 49))]
-    assert scene_intervals([], 6) == []
+    assert scene_intervals([a, b], 7) == [(a, b), (b, datetime(2025, 5, 15, 9, 49))]
+    assert scene_intervals([], 7) == []
+
+
+def test_scene_intervals_same_pass_and_season_gap() -> None:
+    a1, a2 = datetime(2025, 5, 14, 9, 48, 2), datetime(2025, 5, 14, 9, 48, 27)   # adjacent frames
+    c = datetime(2026, 10, 1, 9, 48)
+    week = datetime(2025, 5, 21, 9, 48, 2)
+    assert scene_intervals([a1, a2, c], 7) == [
+        (a1, week), (a2, datetime(2025, 5, 21, 9, 48, 27)), (c, datetime(2026, 10, 8, 9, 48))]
 
 
 def test_near_ice_treats_nan_as_open_water() -> None:
@@ -126,7 +134,7 @@ def test_build_czml_packets(cfg: Config) -> None:
     packets = build_czml(find_scenes(cfg, "HV"), ViewerParams(near_ice_km=5))
     by_id = {p["id"]: p for p in packets}
     assert packets[0]["id"] == "document"
-    assert by_id["document"]["clock"]["interval"] == "2025-05-02T09:48:02Z/2025-05-14T09:49:25Z"
+    assert by_id["document"]["clock"]["interval"] == "2025-05-02T09:48:02Z/2025-05-15T09:49:25Z"
     assert by_id["legend"]["properties"]["near_ice_km"] == 5
 
     s1 = by_id["scene/S1C_IW_20250502T094802_DHP_RTC20_G_gpuned_570A"]["properties"]
@@ -137,10 +145,11 @@ def test_build_czml_packets(cfg: Config) -> None:
     assert len(dets) == 4
     first = dets[0]
     assert first["availability"] == "2025-05-02T09:48:02Z/2025-05-08T09:49:24Z"   # no overlap
-    assert dets[-1]["availability"] == "2025-05-08T09:49:25Z/2025-05-14T09:49:25Z"
+    assert dets[-1]["availability"] == "2025-05-08T09:49:25Z/2025-05-15T09:49:25Z"
     assert first["properties"]["near_ice"] is True
     assert first["point"]["color"]["rgba"][:3] == [150, 150, 150]
-    assert first["properties"]["mean_db_HV"] is None              # NaN -> JSON null
+    assert "mean_db_HV" not in first["properties"]                # NaN -> left out
+    assert all(v is not None for d in dets for v in d["properties"].values())  # Cesium rejects null
     assert dets[2]["properties"]["near_ice"] is False              # NaN distance
     assert "no pack ice mapped" in dets[2]["description"]
 
@@ -149,6 +158,17 @@ def test_build_czml_packets(cfg: Config) -> None:
     lons = footprints[0]["polygon"]["positions"]["cartographicDegrees"][::3]
     assert -60 < min(lons) < max(lons) < -50                       # reprojected to 4326
     assert len([p for p in packets if p["id"].startswith("seaice/")]) == 1
+
+
+def test_build_czml_ice_free_scene(cfg: Config) -> None:
+    """Summer scene: empty pack-ice layer, all distances NaN."""
+    first = next(iter(SCENES))
+    gpd.GeoDataFrame({"area_km2": []}, geometry=[], crs="EPSG:4326").to_file(
+        cfg.path("outputs") / "seaice" / f"{first}_seaice.geojson", driver="GeoJSON")
+    packets = build_czml(find_scenes(cfg, "HV"), ViewerParams())
+    assert not [p for p in packets if p["id"].startswith("seaice/")]
+    s1 = next(p for p in packets if p["id"] == f"scene/{first}")["properties"]
+    assert s1["ice_area_km2"] == 0.0
 
 
 def test_export_writes_valid_json(cfg: Config) -> None:

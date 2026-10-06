@@ -31,7 +31,7 @@ ICE_RGBA = [120, 200, 255, 90]
 @dataclass(frozen=True)
 class ViewerParams:
     near_ice_km: float = 5.0
-    last_interval_days: float = 6.0   # display time for the last scene (S1A+S1C revisit)
+    last_interval_days: float = 7.0   # max display time per scene (S1A+S1C revisit is 6 d)
     contrast_db_range: tuple[float, float] = (10.0, 20.0)
     colormap: str = "plasma"
     point_px_range: tuple[float, float] = (6.0, 16.0)
@@ -56,10 +56,18 @@ def _parse(ts: str) -> datetime:
     return datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")
 
 
-def scene_intervals(starts: list[datetime], last_days: float) -> list[tuple[datetime, datetime]]:
-    """[start_i, start_{i+1}) per scene; the last one stays visible for `last_days`."""
-    ends = starts[1:] + [starts[-1] + timedelta(days=last_days)] if starts else []
-    return list(zip(starts, ends, strict=True))
+def scene_intervals(starts: list[datetime], max_days: float) -> list[tuple[datetime, datetime]]:
+    """Display interval per scene (`starts` sorted): until the next day's pass, at most `max_days`.
+
+    Frames of one pass (same day) show together; the cap keeps a scene from lingering
+    across the months or years between seasons.
+    """
+    out = []
+    for t in starts:
+        cap = t + timedelta(days=max_days)
+        nxt = next((s for s in starts if s.date() > t.date()), None)
+        out.append((t, min(nxt, cap) if nxt else cap))
+    return out
 
 
 def near_ice(distance_km: np.ndarray, threshold_km: float) -> np.ndarray:
@@ -152,7 +160,8 @@ def detection_packets(gdf: gpd.GeoDataFrame, availability: str, p: ViewerParams
         raw = row.drop(labels="geometry").to_dict()
         raw["timestamp"] = str(row["timestamp"])[:19].replace(" ", "T") + "Z"
         raw["near_ice"] = bool(flag)
-        props = {k: _clean(v) for k, v in raw.items()}
+        # Cesium's CZML loader throws on null property values, so missing ones are left out.
+        props = {k: c for k, v in raw.items() if (c := _clean(v)) is not None}
         rgba = NEAR_ICE_RGBA if flag else contrast_rgba(float(row["contrast_db"]), p)
         size = p.point_px_range[0] if flag else point_px(float(row["structure_m"]), p)
         packets.append({
