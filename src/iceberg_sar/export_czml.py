@@ -3,7 +3,8 @@
 Each scene is shown from its acquisition time until the next scene starts, so scrubbing
 the Cesium timeline steps through the dates. Detections keep all their attributes as CZML
 `properties`; `near_ice` flags candidates close to mapped pack ice (likely floes), which
-the viewer greys out or hides instead of deleting them.
+the viewer greys out or hides instead of deleting them. Static targets (seen at the same
+spot on several dates, see `static_targets.py`) are left out.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from shapely.geometry import Polygon
 from shapely.geometry.base import BaseGeometry
 
 from iceberg_sar.config import Config
+from iceberg_sar.static_targets import StaticParams, find_static, is_static, static_params
 
 NEAR_ICE_RGBA = [150, 150, 150, 200]
 FOOTPRINT_RGBA = [255, 210, 60, 255]
@@ -227,7 +229,8 @@ def find_scenes(cfg: Config, band: str, start: date | None = None,
     return sorted(scenes, key=lambda s: s.start)
 
 
-def build_czml(scenes: list[Scene], p: ViewerParams) -> list[dict[str, Any]]:
+def build_czml(scenes: list[Scene], p: ViewerParams, static: gpd.GeoDataFrame | None = None,
+               sp: StaticParams | None = None) -> list[dict[str, Any]]:
     if not scenes:
         raise ValueError("No scenes with detections; run `detect` first")
     intervals = scene_intervals([s.start for s in scenes], p.last_interval_days)
@@ -258,6 +261,10 @@ def build_czml(scenes: list[Scene], p: ViewerParams) -> list[dict[str, Any]]:
         shown_until = end - timedelta(seconds=1) if i < len(scenes) - 1 else end
         avail = f"{_iso(start)}/{_iso(shown_until)}"
         gdf = gpd.read_file(scene.detections)
+        n_static = 0
+        if static is not None and sp is not None:
+            drop = is_static(gdf, static, sp)
+            gdf, n_static = gdf[~drop], int(drop.sum())
         flags = (near_ice(gdf["distance_to_ice_km"].to_numpy(), p.near_ice_km) if len(gdf)
                  else np.zeros(0, dtype=bool))
         ice_km2 = 0.0
@@ -277,6 +284,7 @@ def build_czml(scenes: list[Scene], p: ViewerParams) -> list[dict[str, Any]]:
                 "n_near_ice": int(np.sum(flags)),
                 "n_open_water": int(len(gdf) - np.sum(flags)),
                 "ice_area_km2": round(ice_km2, 1),
+                "n_static_removed": n_static,
             },
         })
         if scene.footprint:
@@ -306,9 +314,20 @@ def viewer_params(cfg: Config) -> ViewerParams:
     )
 
 
+def build_static(cfg: Config, band: str) -> tuple[gpd.GeoDataFrame, StaticParams]:
+    """Static targets from every processed scene; written next to the detections."""
+    sp = static_params(cfg)
+    dets = [(s.start.date(), gpd.read_file(s.detections)) for s in find_scenes(cfg, band)]
+    static = find_static(dets, sp)
+    out = cfg.path("outputs") / f"static_targets_{band}.geojson"
+    static.to_file(out, driver="GeoJSON")
+    return static, sp
+
+
 def export_czml(cfg: Config, band: str = "HV", start: date | None = None,
                 end: date | None = None) -> tuple[Path, list[dict[str, Any]]]:
-    packets = build_czml(find_scenes(cfg, band, start, end), viewer_params(cfg))
+    static, sp = build_static(cfg, band)
+    packets = build_czml(find_scenes(cfg, band, start, end), viewer_params(cfg), static, sp)
     out = cfg.path("czml")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(packets, separators=(",", ":")), encoding="utf-8")
