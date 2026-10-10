@@ -68,7 +68,7 @@ The pipeline steps (parameters in [config.yaml](config.yaml), lengths in metres 
 4. **Ice-strip rejection.** Each target is grown to the region more than 4 dB above background. Structures longer than 300 m are thin strips of loose ice, not bergs.
 5. **HH co-pol check.** A target must also be 6 dB above background in HH. 10 m IW GRD is oversampled (true resolution about 20 m), so HV speckle grains span about 2×2 px and pass the size filter. Real targets are bright in both polarizations.
 6. **Output:** GeoJSON points with area, extent, structure length, peak and mean dB per band, contrast, incidence angle and distance to pack ice. CZML for the viewer, with one time interval per scene.
-7. **Static targets.** Bergs drift hundreds of metres or more between passes; a rock returns to the same spot within the ~10–30 m geolocation error. Targets detected within 50 m of each other on two or more dates are treated as unmapped rocks or islets. They are listed in `data/outputs/static_targets_HV.geojson` and left out of the viewer (the detection files keep them).
+7. **Static targets.** Bergs drift hundreds of metres or more between passes; a rock returns to the same spot within the ~10–30 m geolocation error. Targets detected within 50 m of each other on three or more dates are treated as unmapped rocks or islets. Two dates are not enough: a berg grounded on a shoal can sit still for one revisit. They are listed in `data/outputs/static_targets_HV.geojson` and left out of the viewer (the detection files keep them).
 
 How the detector was tuned is in [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
 
@@ -154,7 +154,7 @@ The headline number uses IIP sightings marked on the same Sentinel-1 pass. That 
 - **Sea state matters.** On rougher days the HV background rises 3–4 dB and small bergs lose contrast.
 - **Near pack ice, many detections are ice floes.** They are flagged by distance to ice, not removed.
 - **CA-CFAR with gamma speckle** understates the heavy tails of real sea clutter, so the actual false-alarm rate is higher than 10⁻⁶. OS-CFAR or K-distribution CFAR is the obvious next step (`cfar.variant` has a slot for it).
-- **Grounded bergs can look static.** A berg grounded at the same spot for several passes is removed with the rocks. Set `static_targets.min_span_days` (e.g. 30) to only drop targets that persist across seasons.
+- **Static-target filter trade-off.** A berg grounded at the same spot for three or more passes is removed with the rocks. An unmapped rock seen on only two dates stays in, so a few remain until more scenes are processed. `static_targets.min_dates` and `min_span_days` set the balance.
 - **No ship/iceberg discrimination** you can rely on (see the experimental classifier below).
 
 ## Experimental: iceberg vs. ship classifier

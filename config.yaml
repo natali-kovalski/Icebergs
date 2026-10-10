@@ -114,7 +114,7 @@ static_targets:
   # Fixed targets missing from OSM (unmapped rocks/islets): same spot on several dates.
   # Bergs drift 100s of m between passes; rocks repeat within the ~10-30 m geolocation error.
   radius_m: 50              # same-target distance between dates
-  min_dates: 2              # distinct acquisition days
+  min_dates: 3              # distinct acquisition days (2 also drops bergs grounded for one revisit)
   min_span_days: 0          # raise (e.g. 30) to keep bergs grounded for a few passes
   # Written to data/outputs/static_targets_<band>.geojson; removed from the CZML only.
 

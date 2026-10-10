@@ -43,7 +43,7 @@ def test_find_static_min_span_keeps_short_lived_targets() -> None:
 
 
 def test_is_static_flags_only_nearby_detections() -> None:
-    p = StaticParams(radius_m=50)
+    p = StaticParams(radius_m=50, min_dates=2)
     static = find_static(_scenes(), p)
     dets = _pts([(ROCK[0] + 30, ROCK[1]), (ROCK[0] + 500, ROCK[1])])
     np.testing.assert_array_equal(is_static(dets, static, p), [True, False])

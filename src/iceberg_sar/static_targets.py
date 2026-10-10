@@ -25,7 +25,7 @@ from iceberg_sar.config import Config
 @dataclass(frozen=True)
 class StaticParams:
     radius_m: float = 50.0
-    min_dates: int = 2
+    min_dates: int = 3
     min_span_days: float = 0.0
     metric_crs: str = "EPSG:32621"
 
