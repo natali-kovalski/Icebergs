@@ -98,12 +98,15 @@ def download(
 
 
 @app.command("land-mask")
-def land_mask(config: ConfigOption = DEFAULT_CONFIG) -> None:
-    """Download OSM land polygons (once) and build the AOI land mask GeoPackage."""
+def land_mask(
+    config: ConfigOption = DEFAULT_CONFIG,
+    force: Annotated[bool, typer.Option(help="Rebuild even if the GeoPackage exists.")] = False,
+) -> None:
+    """Download OSM land polygons and point rocks/islets (once), build the AOI land mask."""
     from iceberg_sar.landmask import build_land_mask
 
     cfg = load_config(config)
-    typer.echo(f"ok  {build_land_mask(cfg)}")
+    typer.echo(f"ok  {build_land_mask(cfg, force=force)}")
 
 
 @app.command()
@@ -221,7 +224,8 @@ def czml(
         if p["id"].startswith("scene/"):
             s = p["properties"]
             typer.echo(f"{s['start'][:10]}  {s['scene_id']}  detections={s['n_detections']}  "
-                       f"open water={s['n_open_water']}  near ice={s['n_near_ice']}")
+                       f"open water={s['n_open_water']}  near ice={s['n_near_ice']}  "
+                       f"static removed={s['n_static_removed']}")
     typer.echo(f"ok  {out}")
 
 

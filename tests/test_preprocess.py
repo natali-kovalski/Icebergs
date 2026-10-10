@@ -78,3 +78,16 @@ def test_mask_band_removes_land_buffer_and_nodata(product: Path, tmp_path: Path)
     assert np.isfinite(data[:, 40:]).all()       # open water kept
     assert data[50, 80] == pytest.approx(1.0)    # target untouched, still linear
     assert 0.5 < stats["valid_fraction"] < 0.7
+
+
+def test_overpass_query_and_point_discs() -> None:
+    from iceberg_sar.landmask import overpass_query, point_features, points_to_discs
+
+    q = overpass_query((-56.0, 48.0, -52.0, 52.0), {"natural": ["rock", "islet"]})
+    assert 'node(48.0,-56.0,52.0,-52.0)["natural"~"^(rock|islet)$"];' in q
+    pts = point_features([{"type": "node", "id": 1, "lat": 49.79, "lon": -54.25,
+                           "tags": {"natural": "rock"}}])
+    assert pts.iloc[0]["kind"] == "natural=rock"
+    discs = points_to_discs(pts, 20, "EPSG:32621")
+    area = gpd.GeoSeries(discs, crs="EPSG:4326").to_crs("EPSG:32621").area.iloc[0]
+    assert abs(area - np.pi * 20**2) < 0.05 * np.pi * 20**2

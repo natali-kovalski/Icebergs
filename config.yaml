@@ -42,6 +42,17 @@ preprocess:
   land_polygons_url: https://osmdata.openstreetmap.de/download/land-polygons-split-4326.zip
   land_polygons_member: land-polygons-split-4326/land_polygons.shp
   land_buffer_m: 500        # removes coastal clutter from shoreline and small islands
+  # Rocks/reefs/islets mapped only as OSM nodes are not in the land polygons; add them as discs
+  # (then buffered by land_buffer_m like any coast). Fetched once into data/land/.
+  land_point_tags:
+    natural: [rock, bare_rock, islet, reef, shoal, stone]
+    place: [islet, island]
+    man_made: [lighthouse, offshore_platform]
+  land_point_radius_m: 20
+  overpass_urls:
+    - https://overpass-api.de/api/interpreter
+    - https://overpass.private.coffee/api/interpreter
+    - https://overpass.kumi.systems/api/interpreter
   mask_outside_aoi: true    # only keep ocean pixels inside aoi.geojson
   metric_crs: EPSG:32621    # UTM 21N for metric processing if the scene is not already projected
   quicklook_db_range: null  # [min, max] dB, or null to use 2nd-99.9th percentile of sea pixels
@@ -98,6 +109,14 @@ validation:
   aircraft_window_h: 8      # aircraft / ship sightings up to this long after the SAR pass
   satellite_window_min: 30  # Sentinel-1 sightings within this of the SAR pass (same pass)
   s2_max_cloud: 90          # skip Sentinel-2 tiles cloudier than this
+
+static_targets:
+  # Fixed targets missing from OSM (unmapped rocks/islets): same spot on several dates.
+  # Bergs drift 100s of m between passes; rocks repeat within the ~10-30 m geolocation error.
+  radius_m: 50              # same-target distance between dates
+  min_dates: 3              # distinct acquisition days (2 also drops bergs grounded for one revisit)
+  min_span_days: 0          # raise (e.g. 30) to keep bergs grounded for a few passes
+  # Written to data/outputs/static_targets_<band>.geojson; removed from the CZML only.
 
 viewer:
   # CZML styling. Nothing is dropped: near-ice candidates are greyed out and can be hidden.

@@ -4,7 +4,7 @@ Detecting icebergs off Newfoundland & Labrador in Sentinel-1 radar imagery, and 
 
 ![Cesium viewer: spring 2025 detections off NE Newfoundland](docs/img/viewer.png)
 
-**In short:** a CFAR detector on Sentinel-1 cross-pol (HV) imagery finds **78% of the icebergs that International Ice Patrol analysts marked** on the same satellite pass (208 of 268, median position difference 136 m). It runs end to end with one command, from scene search to a time-dynamic CZML file for the viewer.
+**In short:** a CFAR detector on Sentinel-1 cross-pol (HV) imagery finds **77% of the icebergs that International Ice Patrol analysts marked** on the same satellite pass (207 of 268, median position difference 137 m). It runs end to end with one command, from scene search to a time-dynamic CZML file for the viewer.
 
 ## The problem
 
@@ -16,8 +16,8 @@ This project builds that pipeline on free Copernicus Sentinel-1 data, for the co
 
 | | |
 |---|---|
-| **Recall vs. same-pass IIP analyst labels** (2019-04-29) | **78%** (208 / 268), median offset 136 m |
-| Recall by berg size | small (15–60 m) 62%, medium (61–120 m) 81%, large (> 120 m) 0 of 4 |
+| **Recall vs. same-pass IIP analyst labels** (2019-04-29) | **77%** (207 / 268), median offset 137 m |
+| Recall by berg size | small (15–60 m) 65%, medium (61–120 m) 81%, large (> 120 m) 0 of 4 |
 | Recall by distance from the coast | stable, 73–84% from 0 to 100 km |
 | Precision | not measurable without AIS ship positions (lower bound 39%) |
 | Runtime | about 17 min per 10 m scene on a laptop (masking + detection), after HyP3 processing |
@@ -32,7 +32,7 @@ The viewer shows three spring 2025 passes (2025-05-02, 05-08, 05-14). In the 1°
 |---|---|
 | **Sentinel-1 IW GRD** (Copernicus, via [ASF](https://search.asf.alaska.edu)) | Radar imagery, HH + HV polarization |
 | **ASF HyP3 RTC** | Terrain-corrected, calibrated GeoTIFFs: gamma0, linear power, 10 m, with incidence-angle map |
-| **OpenStreetMap land polygons** | Land mask, buffered 500 m to remove coastal clutter |
+| **OpenStreetMap land polygons + rock/islet nodes** (Overpass API) | Land mask, buffered 500 m to remove coastal clutter |
 | **NAIS daily iceberg chart** (IIP + Canadian Ice Service) | Count check per 1° square |
 | **IIP Iceberg Sightings Database** (NSIDC G00807) | Per-berg validation (database ends with the 2021 season) |
 | **Sentinel-2 L2A** (Earth Search) | Optical cross-check |
@@ -62,12 +62,13 @@ A few SAR terms, briefly:
 
 The pipeline steps (parameters in [config.yaml](config.yaml), lengths in metres so tuning carries over between 10 m and 20 m pixels):
 
-1. **Masks.** Land from OSM, buffered 500 m. Pack ice from HV statistics on 200 m cells: pack ice is bright and uniform, open water is dark, and a cell with an iceberg is spiky. Pack ice is masked with a 1 km buffer, and each detection keeps its distance to the ice.
+1. **Masks.** Land from OSM, buffered 500 m. OSM land polygons only cover coastlines mapped as lines, so the thousands of offshore rocks and islets mapped as single points (many from the CanVec import) are added too. Pack ice from HV statistics on 200 m cells: pack ice is bright and uniform, open water is dark, and a cell with an iceberg is spiky. Pack ice is masked with a 1 km buffer, and each detection keeps its distance to the ice.
 2. **CA-CFAR on HV.** The background is the mean of a ring (400 m half-width, minus a 100 m guard window that keeps the target's own energy out). The threshold comes from a false-alarm rate of 10⁻⁶ under a gamma speckle model, with ENL estimated from the scene. HyP3 removes the HV thermal noise floor, so open-water HV sits at −30 to −40 dB with ENL below 1. A textbook ENL would set the threshold far too low.
 3. **Connected components** of 2 px to 0.8 km². Components within 200 m of land, ice or nodata are dropped.
 4. **Ice-strip rejection.** Each target is grown to the region more than 4 dB above background. Structures longer than 300 m are thin strips of loose ice, not bergs.
 5. **HH co-pol check.** A target must also be 6 dB above background in HH. 10 m IW GRD is oversampled (true resolution about 20 m), so HV speckle grains span about 2×2 px and pass the size filter. Real targets are bright in both polarizations.
 6. **Output:** GeoJSON points with area, extent, structure length, peak and mean dB per band, contrast, incidence angle and distance to pack ice. CZML for the viewer, with one time interval per scene.
+7. **Static targets.** Bergs drift hundreds of metres or more between passes; a rock returns to the same spot within the ~10–30 m geolocation error. Targets detected within 50 m of each other on three or more dates are treated as unmapped rocks or islets. Two dates are not enough: a berg grounded on a shoal can sit still for one revisit. They are listed in `data/outputs/static_targets_HV.geojson` and left out of the viewer (the detection files keep them).
 
 How the detector was tuned is in [docs/milestone2-cfar-findings.md](docs/milestone2-cfar-findings.md).
 
@@ -116,7 +117,7 @@ In the viewer:
 python -m iceberg_sar.cli search --pol HH+HV                 # scene list + footprints -> data/outputs/
 python -m iceberg_sar.cli order <granule>                    # one HyP3 RTC job (skips if already ordered)
 python -m iceberg_sar.cli download                           # wait, download, unzip to data/raw/
-python -m iceberg_sar.cli land-mask
+python -m iceberg_sar.cli land-mask                          # --force rebuilds it
 python -m iceberg_sar.cli preprocess data\raw\<product_dir>  # masked linear rasters + dB quicklooks
 python -m iceberg_sar.cli detect data\raw\<product_dir>      # CFAR on HV; --band HH to compare
 python -m iceberg_sar.cli czml --start 2025-05-01 --end 2025-05-15
@@ -126,6 +127,8 @@ Outputs (all under the gitignored `data/`):
 - `data/interim/<product>/<product>_<POL>_masked.tif`: linear power, masked areas NaN. This is the CFAR input.
 - `data/outputs/quicklooks/<product>_<POL>_db.png`: dB quicklook.
 - `data/outputs/detections/<product>_HV_detections.{geojson,png,json}`: detections (EPSG:4326), overlay and run summary.
+- `data/outputs/static_targets_HV.geojson`: targets seen at the same spot on several dates (rocks, islets), left out of the viewer.
+- `data/land/osm_land_aoi.gpkg`, `osm_land_points_aoi.gpkg`: land mask and the OSM rock/islet points added to it.
 
 ## Validation
 
@@ -145,12 +148,13 @@ The headline number uses IIP sightings marked on the same Sentinel-1 pass. That 
 
 ## Limitations
 
-- **Precision is unknown.** 326 of 534 detections on the validation pass have no IIP label. They are a mix of unrecorded bergs, fishing vessels and false alarms, in unknown proportions. Separating them needs AIS vessel positions.
+- **Precision is unknown.** 324 of 531 detections on the validation pass have no IIP label. They are a mix of unrecorded bergs, fishing vessels and false alarms, in unknown proportions. Separating them needs AIS vessel positions.
 - **Large bergs are missed** (0 of 4 over 120 m). The 300 m strip filter and a guard window smaller than the berg are the likely causes.
-- **Small bergs are harder** (62% recall), and single-pixel targets are removed by the 2 px minimum.
+- **Small bergs are harder** (65% recall), and single-pixel targets are removed by the 2 px minimum.
 - **Sea state matters.** On rougher days the HV background rises 3–4 dB and small bergs lose contrast.
 - **Near pack ice, many detections are ice floes.** They are flagged by distance to ice, not removed.
 - **CA-CFAR with gamma speckle** understates the heavy tails of real sea clutter, so the actual false-alarm rate is higher than 10⁻⁶. OS-CFAR or K-distribution CFAR is the obvious next step (`cfar.variant` has a slot for it).
+- **Static-target filter trade-off.** A berg grounded at the same spot for three or more passes is removed with the rocks. An unmapped rock seen on only two dates stays in, so a few remain until more scenes are processed. `static_targets.min_dates` and `min_span_days` set the balance.
 - **No ship/iceberg discrimination** you can rely on (see the experimental classifier below).
 
 ## Experimental: iceberg vs. ship classifier

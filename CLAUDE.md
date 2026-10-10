@@ -80,7 +80,7 @@ iceberg-alley-sar/
 ## Current status (as of 2026-10-05)
 - **Milestones 0–3: done.** Search, HyP3 RTC (10 m), land + pack-ice masks, CA-CFAR on HV with strip rejection and an HH co-pol check, GeoJSON detections, and the Vue + Cesium viewer.
 - **Scenes:** spring 2025 (2025-05-02, 05-08, 05-14) in the viewer, checked against NAIS charts. Spring 2019 (2019-04-15, 04-29) and 2020-06-10 for point-level validation.
-- **Validation (beyond the plan):** 78% recall (209/268) against same-pass IIP analyst labels on 2019-04-29, median offset 128 m. Precision is not measurable without AIS. Large bergs (>120 m) are missed. See `docs/validation-findings.md`.
+- **Validation (beyond the plan):** 77% recall (207/268) against same-pass IIP analyst labels on 2019-04-29, median offset 137 m. Precision is not measurable without AIS. Large bergs (>120 m) are missed. See `docs/validation-findings.md`.
 - **Experimental:** iceberg vs. ship CNN trained on Kaggle chips (`iceberg_prob`). Use it as a review hint only; see the README.
 - **Milestone 4: done.** Portfolio README with screenshots, `cli.py run` end to end for a date range (`pipeline.py`, scene selection in `run:` in `config.yaml`), and two LinkedIn post drafts in `docs/linkedin-posts.md` (local only, excluded via `.git/info/exclude`, never commit). Not done: Dockerfile, deployed static viewer.
 - **Stretch not done:** OS-CFAR / K-distribution (`cfar.variant` has a slot for it).
@@ -118,7 +118,7 @@ iceberg-alley-sar/
 
 ## Known pitfalls to watch for
 - Speckle and sea state: rough seas raise clutter and false alarms. Log wind conditions where possible.
-- Coastline and islands produce bright returns, so the land mask buffer matters.
+- Coastline and islands produce bright returns, so the land mask buffer matters. OSM land polygons miss rocks/islets mapped as single nodes (thousands off NL); the land mask adds them from Overpass, and repeat detections at one spot are dropped as static targets.
 - Near-range vs. far-range incidence angle changes backscatter. Keep incidence angle as an attribute of each detection.
 - Sea ice (pack ice) looks very different from icebergs in open water. Early in the season, pack ice can cover parts of the AOI. Mask or exclude it rather than detecting it as icebergs.
 - Keep dB vs. linear consistent: CFAR on linear intensity, dB for display and reported attributes.
@@ -133,3 +133,83 @@ iceberg-alley-sar/
 ## Open questions (decide with me as we go)
 - Whether to add FastAPI + PostGIS for storing detections across many scenes, or keep flat files (flat files so far).
 - Whether to keep the experimental classifier in the portfolio write-up, given that it can't be validated without AIS.
+
+
+### Milestone 5: THOR foundation-model detector (comparison with CFAR)
+
+Goal: run the THOR foundation model (frozen encoder + small trained head) on the
+same HH/HV scenes as the CFAR, and compare both against the same IIP labels.
+Reference: Forgaard et al., "Efficient iceberg detection in Sentinel-1 imagery
+using the THOR foundation model" (IGARSS 2026). Weights: FM4CS/THOR-1.0-tiny and
+-base on Hugging Face (Apache 2.0), loaded via TerraTorch.
+
+New code lives in `src/iceberg_sar/thor/` (`encoder.py`, `chips.py`, `targets.py`,
+`heads.py`, `train.py`, `infer.py`). Parameters go in a `thor:` block in `config.yaml`.
+
+#### 5a: Smoke test (no training)
+- Install TerraTorch + the THOR extension. Load THOR Tiny.
+- Check the Sentinel-1 band list in the THOR code: are HH/HV supported, or only VV/VH?
+  If only VV/VH: feed HH→VV slot, HV→VH slot, and note it as a known domain shift.
+- Check what input THOR expects: sigma0, linear vs dB, and normalization stats.
+- Run the frozen encoder on one 512×512 crop from 2025-05-08 at patch size 8×8.
+  Reduce the embeddings to 3 PCA components and save them as an RGB PNG next to the dB quicklook.
+- **Done when:** the PCA image shows bergs (and the ice edge) as visibly distinct
+  from open water. If it doesn't, stop and reconsider before building anything.
+
+#### 5b: Training data from IIP labels
+- Select HH/HV IW scenes 2019–2021 that have same-pass IIP Sentinel-1 analyst labels.
+  **Hold out all of April 2019** (covers the 2019-04-15 and 04-29 validation scenes
+  and the same bergs on nearby dates). Split train/val by scene, never by crop.
+- Order HyP3 RTC with **sigma0 radiometry** for these scenes (THOR was pretrained
+  on sigma0). Budget against the monthly HyP3 credit limit before ordering.
+- Extract 512×512 crops: crops around labelled bergs, plus negative crops sampled
+  from open water, the pack-ice edge and coastal areas. Apply the land/ice masks as
+  for the CFAR.
+- Targets: apply the drift offset from `matching.py`, then render each sighting as
+  a Gaussian on a heatmap (sigma in metres in config). Point labels, no masks.
+- Save the chips under `data/thor/chips/`.
+- **Done when:** I can see a contact sheet of ~20 crops with target Gaussians
+  overlaid, and a summary table of crops/bergs per scene and per split.
+
+#### 5c: Train the heads
+- Precompute and cache frozen-encoder features for all chips (`data/thor/features/`).
+  THOR Tiny at 8×8 on 512² is 64×64×192 per crop, a few MB each. After that,
+  head training is fast and can be iterated on cheaply.
+- Heads: (1) linear baseline, (2) CenterNet-style heatmap head (MLP + sigmoid,
+  focal loss), which is the primary head because it matches point labels.
+- Inference: sliding window with overlap over a full scene, peak extraction
+  (3×3 max-pool NMS + threshold) → detections GeoJSON with the **same schema as
+  the CFAR output**, plus `detector: "thor"` and `score`.
+- **Done when:** validation loss curves are saved, and heatmap overlays on held-out
+  validation crops look sensible.
+
+#### 5d: Head-to-head with CFAR
+- Run both detectors on 2019-04-15 and 2019-04-29 with identical masks, identical
+  IIP labels and identical matching radius (`pointval.py`).
+- Since precision isn't measurable without AIS, compare **recall at a matched
+  number of detections**. Sweep the CFAR PFA and the THOR score threshold, and plot
+  recall vs. detections per scene for both.
+- Break down misses and detections by berg size (esp. >120 m, which the CFAR misses),
+  distance to pack ice and incidence angle.
+- Run THOR on the spring 2025 scenes and add it as a toggleable CZML layer in the viewer.
+- Write up in `docs/thor-vs-cfar.md`.
+- **Done when:** one figure (recall vs. detection count, both methods) and the
+  write-up answer: where does THOR beat the CFAR, where doesn't it, and why.
+
+#### Milestone 5 decisions
+- Start with THOR Tiny at 8×8 patches. The paper reports Tiny ≈ Base, and 8×8 is close to
+  4×4 at a quarter of the tokens. Try 4×4 only if small bergs are being missed.
+- Encoder stays frozen. No fine-tuning of THOR itself.
+- CenterNet head is primary, linear head is the sanity baseline.
+
+#### Milestone 5 pitfalls
+- Radiometry: gamma0 RTC ≠ sigma0. Use sigma0 products or convert with incidence angle.
+- Leakage: the same berg appears across consecutive passes. Hold out by date range, not by scene.
+- Tile borders: stitch overlapping windows and keep only centre regions, or peaks double-count.
+- Compute: 5a/5b run on CPU. Feature caching and 4×4 inference need a GPU
+  (e.g. an AWS spot g4dn/g5 instance). Don't commit weights or cached features.
+
+#### Milestone 5 open questions
+- If there are too few HH/HV scenes with IIP labels: add VV/VH crops to training
+  (the paper's setup) and accept the cross-polarization shift?
+- Whether a 4×4 run is worth the GPU cost after seeing the 8×8 results.
